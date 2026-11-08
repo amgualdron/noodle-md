@@ -7,7 +7,7 @@ env/
 setup.log
 
 # Everything a run produces: run.yaml, tasks.csv, logs/, trajectories/,
-# checkpoints/, slurm/, timeseries/, status.txt. Back these up separately.
+# checkpoints/, slurm/, analysis/, status.txt. Back these up separately.
 runs/
 
 # ---------------------------------------------------------------------------

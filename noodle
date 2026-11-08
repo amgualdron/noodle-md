@@ -6,6 +6,7 @@
 #   ./noodle launch  <run>   start it (and resume anything that stopped)
 #   ./noodle status  [run]   see how it's going (no name: list every run)
 #   ./noodle analyze <run>   turn finished simulations into CSV tables
+#   ./noodle clean   <run>   delete the trajectories of analysed tasks (copy them to the NAS first)
 #   ./noodle check           physics self-test (setup.sh runs it too)
 #
 # This only starts the matching program in src/ with the tool's own Python (env/,
@@ -18,9 +19,10 @@ case "$1" in
     launch)  program=launch_run.py ;;
     status)  program=status.py ;;
     analyze) program=analyze_run.py ;;
+    clean)   program=clean_run.py ;;
     check)   program=check_physics.py ;;
     *)
-        sed -n '4,9p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '4,10p' "$0" | sed 's/^# \{0,1\}//'
         exit 1 ;;
 esac
 shift

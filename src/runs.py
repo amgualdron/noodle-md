@@ -1,4 +1,4 @@
-"""Small helpers shared by the commands (./noodle new, launch, status, analyze) and simulate.py.
+"""Small helpers shared by the commands (./noodle new, launch, status, analyze, clean) and simulate.py.
 
 A task's log (logs/task_0001.json) has a "status": "running" while it runs (or until
 it is stopped), "completed" when done, or "failed" if it ended with an error (the
@@ -11,6 +11,8 @@ running at the same time (./noodle launch on the login node, tasks on the cluste
     tasks.csv, physics.yaml       launch_run.py, once, on the first launch
     slurm/submissions.csv         launch_run.py, one line per task each time it is submitted
     logs/task_0001.json           simulate.py, while that task runs
+    analysis/                     analyze_run.py (also called by ./noodle clean)
+    trajectories.sha256           clean_run.py, which also deletes trajectories of analysed tasks
 """
 
 import csv
@@ -130,6 +132,24 @@ def duration(seconds):
     if days:
         return f"{days}d {hours:02d}h"
     return f"{hours}h {minutes:02d}m" if hours else f"{minutes}m"
+
+
+def compress(ids):
+    """[1, 2, 3, 7] -> '1-3,7', the way sbatch --array wants it."""
+    parts, start = [], ids[0]
+    for previous, current in zip(ids, ids[1:] + [None]):
+        if current != previous + 1:
+            parts.append(f"{start}-{previous}" if previous != start else str(start))
+            start = current
+    return ",".join(parts)
+
+
+def file_size(n_bytes):
+    """1.23e9 -> '1.2 GB'."""
+    for size, unit in ((1e12, "TB"), (1e9, "GB"), (1e6, "MB")):
+        if n_bytes >= size:
+            return f"{n_bytes / size:.1f} {unit}"
+    return f"{n_bytes / 1e3:.0f} kB"
 
 
 def about(seconds):

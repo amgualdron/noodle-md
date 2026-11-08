@@ -13,6 +13,7 @@ You use it with one command and one settings file. No programming needed.
 ./noodle launch <name>     # start it (and resume anything that stopped)
 ./noodle status <name>     # see how it's going
 ./noodle analyze <name>    # turn finished simulations into CSV tables
+./noodle clean <name>      # delete trajectories once they are on the NAS, keeping the results
 ```
 
 Every command in this README is typed in a terminal **inside the `noodle-md` folder**.
@@ -150,15 +151,15 @@ Tasks      500 proteins x 2 physics set(s) x 3 replicate(s) = 3000 tasks
 Length     steps per task (equilibration + production), for the shortest and longest protein
   grafted              1.75 million (N=20) to 3.06 billion (N=596), saving 3000 frames
   grafted_charged      1.75 million (N=20) to 3.06 billion (N=596), saving 3000 frames
-Time       under a minute to ~21d 07h per task, ~2910d 20h of computing in total
-           [!] ... task(s) need longer than the 3-day time limit: they will stop and need ./noodle launch again ...
+Time       estimated by ./noodle status once the first tasks have measured their speed
 Disk       ~11.8 GB of trajectories
 Cluster    3000 SLURM jobs, time limit 3 day(s) each, no limit on how many at a time
 
 Launch these 3000 tasks? [y/N]
 ```
 
-The time is a rough estimate from a 3-second test simulation. Answer `y` to launch;
+There is no time estimate yet: a test on your laptop or the login node says little about
+the cluster's nodes, so `./noodle status` estimates it from the run itself. Answer `y` to launch;
 anything else changes nothing. Then:
 
 - **Cluster:** every task is submitted to SLURM as its own job, and the command checks
@@ -182,12 +183,48 @@ else, make a new run. Changing a file in `sequences/` never affects a launched r
 ```
 
 ```
-3000 tasks  █████████████████░░░  2571 done · 9 running · 404 waiting · 16 stopped
+grafted_charged_top500  Top-500 human IDRs, -0.1 e/nm^2 wall
+3d 07h since launch   launched 2026-11-02 09:14 · checked 2026-11-05 16:40
 
-NOT FINISHED
-  task  412  Q8XYZ1_idr3              N=412   grafted_charged      stopped  stopped at 82% after 2d 23h, needs ~14h 20m more: ./noodle launch resumes it
-  task  409  P1234_idr1               N=288   grafted              running  production 33%, ~11h 06m left
+████████████████████████▓░░░░░  2571 of 3000 tasks done (86%)
+  2 failed · 14 stopped · 9 running · 404 waiting · 2571 done
+
+Time left  ~92d 14h of computing for the 427 unfinished tasks, the longest needs ~2d 06h
+           from the speeds measured by 2589 tasks of this run; how long you wait also depends on the queue
+
+                      failed  stopped  running  waiting       done
+  baseline                 1        6        4      189  1300/1500
+  grafted_charged          1        8        5      215  1271/1500
+
+FAILED 2  fix the cause first · full messages in runs/grafted_charged_top500/slurm/
+  2 × RuntimeError: Particle out of box: particle 37 at (12.1, -3.0, 410.2)
+      tasks 1207, 2214
+
+STOPPED 14  ./noodle launch grafted_charged_top500 resumes them from their last checkpoint
+   412  Q8XYZ1_idr3   N=412   grafted_charged  stopped at  82% after 2d 23h of run time, needs ~14h 20m more
+   ...
+
+RUNNING 9
+   409  P1234_idr1    N=288   grafted_charged  production     33%  21h 40m so far, ~1d 20h left
+   ...
+
+WAITING 404  in the SLURM queue
+
+DONE 2571  run time 9m (N=20) to 2d 19h (N=573), 812d 05h in total
+
+Next: ./noodle launch grafted_charged_top500 resumes the 14 stopped tasks (and asks before retrying the failed ones).
 ```
+
+Tasks that need you come first. Failed tasks are grouped by error, since one cause
+often fails many tasks. On screen each list shows at most 10 tasks; `runs/<name>/status.txt`
+has the full report. With several physics sets, the counts are also shown per set (done as
+done/total). A running task that has not reported for over 1.5 hours is flagged `stuck?`.
+Time estimates come only from speeds measured in this run, on the cluster's own nodes:
+each task's speed (measured a minute after it starts, then every hour) and, for finished
+tasks, all their steps over their run time. A task that has not measured its own speed
+yet uses that of the measured task closest in length, in the same physics set. Until any
+task has measured its speed, the time left shows as not known. "Time left" is computing
+time; how long you actually wait also depends on how many tasks the queue runs at once.
 
 | state | meaning |
 |---|---|
@@ -212,7 +249,7 @@ identical.)
 **Failed tasks** would most likely fail again, so `./noodle launch` lists their errors
 and asks before starting them again. Fix the cause first.
 
-`./noodle status` without a name lists all runs.
+`./noodle status` without a name lists all runs with how many tasks are done.
 
 ### Step 6: results
 
@@ -220,19 +257,77 @@ and asks before starting them again. Fix the cause first.
 ./noodle analyze grafted_charged_top500
 ```
 
-This writes `runs/<name>/timeseries/<physics set>/<protein>_pooled_timeseries.csv`, one
-row per saved frame of every finished replicate. You can run it while the run is still
-going.
+Everything is per protein and physics set, with the replicates pooled. It writes, in
+`runs/<name>/analysis/`:
+
+| file | what |
+|---|---|
+| `summary.csv` | **the result**: one row per protein and physics set, averages with error bars |
+| `timeseries/<physics set>/<protein>.csv.gz` | every saved frame of all its replicates (~60 KB per replicate) |
+
+You can run it while the run is still going. Each replicate is analysed once, when it
+has finished, and added to its protein's timeseries; rerunning skips what is already
+there, so it is quick.
+
+The timeseries (gzip-compressed CSV; pandas reads them directly with `pd.read_csv`) hold
+the per-frame values every statistic is made from, so a new statistic (a distribution,
+a correlation time, a different average) needs only them, not the trajectories:
 
 | column | meaning (lengths in nm) |
 |---|---|
-| `sequence_name`, `physics`, `task_id`, `seed`, `frame` | where the row comes from |
-| `rg`, `rg_sq` | radius of gyration (chain size), and its square |
-| `ree_x`, `ree_y`, `ree_z`, `ree_sq` | end-to-end vector (first to last residue), and its length squared. For grafted chains z points away from the surface. |
+| `replicate` | which replicate (independent simulation) the frame comes from |
+| `frame` | the saved frame within that replicate, 0, 1, 2, ... (evenly spaced over production) |
+| `rg` | radius of gyration (chain size), mass-weighted |
+| `ree_x`, `ree_y`, `ree_z` | end-to-end vector, from the first residue to the last. For grafted chains z points away from the surface (so `ree_z` is negative when the C-terminus is grafted) |
 | `asphericity` | shape: 0 = ball, 1 = rod |
+| `com_height` | grafted only: height of the chain's centre of mass above the surface |
+
+`summary.csv` gives, besides `n_residues`, `replicates` and `frames` (pooled), for each
+of `rg`, `rg_sq` (Rg²), `ree_sq` (end-to-end distance²), `asphericity`, `ree_z` and
+`com_height` (the last two for grafted chains only) the average over all pooled frames
+and its error bar `<name>_err` (one standard error). The error bar comes from the
+scatter between the replicates' own averages: replicates are independent, so this is
+the honest one. With a single replicate it is a block error instead (its frames cut
+into 10 consecutive blocks, from the scatter of the block averages).
 
 The trajectories (`runs/<name>/trajectories/*.gsd`) open in [OVITO](https://www.ovito.org)
 or in Python with the `gsd` package.
+
+### Step 7: free the disk space
+
+Trajectories take most of a run's space (megabytes per task), so once a run's results
+are in, move the trajectories to the group NAS and delete them from the cluster:
+
+1. Copy `runs/<name>/trajectories/` to the NAS with Globus. (Globus checks every file
+   it transfers.)
+2. Run
+
+   ```bash
+   ./noodle clean grafted_charged_top500
+   ```
+
+   It first analyses every finished task (step 6), then shows what it would delete and
+   asks you to type the run name:
+
+   ```
+   Delete     the trajectories of 2571 completed, analysed task(s): 9.8 GB
+   Keep       analysis/ (180 MB), trajectories.sha256, logs/, slurm/, tasks.csv, physics.yaml, run.yaml
+              the files of unfinished tasks (1.3 GB): needed to resume them
+   ```
+
+Only trajectories of tasks that are **finished and analysed** are deleted (plus any
+checkpoint a finished task left behind). Unfinished tasks keep their trajectory and
+checkpoint, so `./noodle launch` can still resume them; run `./noodle clean` again
+once they finish. Everything small stays, so `./noodle status` and `./noodle analyze`
+keep working.
+
+Before deleting, it writes `runs/<name>/trajectories.sha256`, the checksum of every
+trajectory it deletes. It is the record of exactly which files went to the NAS, and
+lets you check a copy at any time: put it in the copy's folder and run
+`sha256sum -c trajectories.sha256` (each file should say `OK`).
+
+To compute something new from the trajectories later, copy them back from the NAS into
+`runs/<name>/trajectories/`.
 
 ---
 
@@ -243,6 +338,7 @@ The geometry is just the physics set you name in `run.yaml`:
 ```yaml
 physics: baseline                              # free chains
 physics: grafted                               # grafted by the N-terminus to a neutral surface
+physics: grafted_reversed                      # grafted by the C-terminus to a neutral surface
 physics: grafted_charged                       # grafted to a surface with -0.1 e/nm^2
 physics: [baseline, grafted, grafted_charged]  # all three, for every protein, in one run
 ```
@@ -286,8 +382,9 @@ grafted_charged_p01:
 physics: [grafted, grafted_charged_m005, grafted_charged, grafted_charged_p01]
 ```
 
-Every protein then runs against every surface, and `./noodle analyze` writes each set's
-results into its own folder under `timeseries/`.
+Every protein then runs against every surface. `./noodle analyze` gives each set its own
+rows in `analysis/summary.csv` (column `physics`) and its own folder under
+`analysis/timeseries/`.
 
 ### Several runs at once
 
@@ -367,10 +464,11 @@ runs/<name>/
   tasks.csv              one row per task: protein, sequence, physics set, replicate, seed
   physics.yaml           the physics sets used, frozen at the first launch
   logs/                  each task's progress (what ./noodle status reads)
-  trajectories/          the saved frames, one .gsd file per task
+  trajectories/          the saved frames, one .gsd file per task (until ./noodle clean)
   checkpoints/           hourly save points of unfinished tasks
   slurm/                 each cluster task's printed output; submissions.csv
-  timeseries/            the ./noodle analyze tables
+  analysis/              the ./noodle analyze tables
+  trajectories.sha256    checksums of the trajectories ./noodle clean deleted
   status.txt             the last ./noodle status report
 ```
 
@@ -384,6 +482,7 @@ src/simulate.py         one task: build the chain, equilibrate, record, checkpoi
 src/launch_run.py       run.yaml + CSV -> tasks; submits them to SLURM or runs them here
 src/new_run.py          ./noodle new        src/run_template.yaml   the run.yaml it copies
 src/status.py           ./noodle status     src/analyze_run.py      ./noodle analyze
+src/clean_run.py        ./noodle clean
 src/runs.py             shared helpers      src/slurm_job.sh        the SLURM job script
 src/check_physics.py    ./noodle check: the physics self-test (setup.sh runs it)
 src/environment.yml     the packages setup.sh installs into env/

@@ -68,6 +68,11 @@ grafted_charged:
   # ./noodle launch prints this number for every charged set.
   wall_charge_density: -0.1           # e/nm^2, i.e. one elementary charge per 10 nm^2
 
+grafted_reversed:
+  extends: grafted
+  description: "Chain grafted by its C-terminus to a neutral, purely repulsive surface"
+  graft_terminus: C
+
 # ── Quick tests: tiny fixed-length runs, NOT physically meaningful ────────────
 test_bulk:
   extends: baseline

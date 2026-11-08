@@ -1,7 +1,7 @@
 """./noodle launch <run name>  --  start (or continue) every unfinished task of a run.
 
 The first time, it reads run.yaml + your CSV, checks the settings, shows the plan (how
-many tasks, how long, how much disk) and asks before doing anything. If you say yes, it
+many tasks, how many steps, how much disk) and asks before doing anything. If you say yes, it
 writes the run's task list and starts the tasks:
     tasks.csv      one row per task: protein x physics set x replicate, with its seed
     physics.yaml   the physics sets this run uses, fully written out and frozen
@@ -21,14 +21,13 @@ import re
 import shutil
 import subprocess
 import sys
-import time
 from datetime import datetime
 from statistics import median
 
 import yaml
 
-from runs import (ROOT, SEQUENCES, about, read_log, read_submissions, read_tasks, run_from_command_line,
-                  run_lengths, slurm_queue)
+from runs import (ROOT, SEQUENCES, compress, file_size, read_log, read_submissions, read_tasks,
+                  run_from_command_line, run_lengths, slurm_queue)
 
 # The 20 standard amino acids: the same letters as the residue table in forcefield.py
 # (repeated here so this script does not have to load HOOMD).
@@ -41,7 +40,6 @@ REFERENCE_SETS = {"bulk": "baseline", "grafted": "grafted"}
 CHOICES = {"geometry": ["bulk", "grafted"], "graft_terminus": ["N", "C"],
            "wall_potential": ["lj93", "lj126"], "wall_attraction_scale": ["hydropathy", "uniform"]}
 
-SPEED_TEST_SECONDS = 3      # length of the test simulation used to estimate run times
 BYTES_PER_RESIDUE = 12      # trajectory size per residue per frame: one position (3 x 4 bytes)
 BYTES_PER_FRAME = 100       # plus the step number and the file's index, per frame
 
@@ -233,31 +231,6 @@ def in_words(number):
     return str(number)
 
 
-def file_size(n_bytes):
-    for size, unit in ((1e12, "TB"), (1e9, "GB"), (1e6, "MB")):
-        if n_bytes >= size:
-            return f"{n_bytes / size:.1f} {unit}"
-    return f"{n_bytes / 1e3:.0f} kB"
-
-
-def measure_speed(sequence, physics):
-    """Steps per second for this sequence on this computer, from a few seconds of simulation.
-
-    HOOMD is imported only here, so the rest of ./noodle launch stays quick.
-    """
-    from simulate import add_forces, create_simulation, starting_snapshot, system_geometry
-
-    sim = create_simulation(seed=1)
-    geometry = system_geometry(sequence, physics)
-    sim.create_state_from_snapshot(starting_snapshot(sequence, physics, geometry, seed=1))
-    add_forces(sim, physics, geometry)
-    sim.run(1000)  # let the starting chain relax a little first
-    start, start_step = time.monotonic(), sim.timestep
-    while time.monotonic() - start < SPEED_TEST_SECONDS:
-        sim.run(1000)
-    return (sim.timestep - start_step) / (time.monotonic() - start)
-
-
 def show_plan(run_dir, settings, sequences, skipped, physics, tasks, on_cluster):
     lengths = sorted(map(len, sequences.values()))
     print(f"New run: {run_dir.name}" + (f'   "{settings["description"]}"' if settings.get("description") else ""))
@@ -290,26 +263,9 @@ def show_plan(run_dir, settings, sequences, skipped, physics, tasks, on_cluster)
                  f"{in_words(shortest)} (N={lengths[0]}) to {in_words(longest)} (N={lengths[-1]})")
         print(f"  {name:20s} {steps}, saving {p['frames']} frames")
 
-    # Time: one short test simulation of the longest protein. The cost of a step grows
-    # about in proportion to the number of residues, which gives every other protein's speed.
-    print(f"Time       (measuring the speed with a {SPEED_TEST_SECONDS}-second test simulation...)", flush=True)
-    longest_name = max(sequences, key=lambda name: len(sequences[name]))
-    first_set = next(iter(physics.values()))
-    speed_times_n = measure_speed(sequences[longest_name], first_set) * lengths[-1]
-    seconds = [sum(run_lengths(physics[t["physics"]], t["length"])[:2]) * t["length"] / speed_times_n
-               for t in tasks]
-    print(f"           {about(min(seconds))} to {about(max(seconds))} per task, "
-          f"{about(sum(seconds))} of computing in total")
-    print("           (a rough estimate, measured on this computer: cluster nodes may be faster or slower)")
-    if on_cluster:
-        limit = settings["time_limit_days"] * 86400
-        too_long = [s for s in seconds if s > limit]
-        if too_long:
-            print(f"           [!] {len(too_long)} task(s) need longer than the {settings['time_limit_days']:g}-day time "
-                  f"limit: they will stop and need ./noodle launch again ({math.ceil(max(seconds) / limit) - 1} "
-                  "time(s) for the longest), unless you raise time_limit_days now")
-    else:
-        print("           here, without SLURM, the tasks run one after another, so the total is the waiting time")
+    # No time estimate here: a test on this computer (a laptop or the login node) says
+    # little about the cluster's nodes. ./noodle status estimates from the run's own speeds.
+    print("Time       estimated by ./noodle status once the first tasks have measured their speed")
 
     n_bytes = sum(int(physics[t["physics"]]["frames"]) * (BYTES_PER_RESIDUE * t["length"] + BYTES_PER_FRAME)
                   for t in tasks)
@@ -378,16 +334,6 @@ def plan_relaunch(run_dir, on_cluster):
 
 
 # ── Starting the tasks ────────────────────────────────────────────────────────
-def compress(ids):
-    """[1, 2, 3, 7] -> '1-3,7', the way sbatch --array wants it."""
-    parts, start = [], ids[0]
-    for previous, current in zip(ids, ids[1:] + [None]):
-        if current != previous + 1:
-            parts.append(f"{start}-{previous}" if previous != start else str(start))
-            start = current
-    return ",".join(parts)
-
-
 def max_array_size():
     out = subprocess.run(["scontrol", "show", "config"], capture_output=True, text=True).stdout
     match = re.search(r"MaxArraySize\s*=\s*(\d+)", out)
