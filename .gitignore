@@ -1,0 +1,76 @@
+# ---------------------------------------------------------------------------
+# noodle-md
+# ---------------------------------------------------------------------------
+
+# Conda environment built by setup.sh (~900 MB, rebuilt from environment.yml)
+env/
+setup.log
+
+# Everything a run produces: run.yaml, tasks.csv, logs/, trajectories/,
+# checkpoints/, slurm/, timeseries/, status.txt. Back these up separately.
+runs/
+
+# ---------------------------------------------------------------------------
+# Simulation / structure data, wherever it ends up
+# ---------------------------------------------------------------------------
+
+# Trajectories and checkpoints (HOOMD GSD, plus other common MD formats)
+*.gsd
+*.dcd
+*.xtc
+*.trr
+*.nc
+*.h5
+*.hdf5
+*.tmp
+
+# Sequence files (the examples/ CSVs are tracked; raw FASTA is not)
+*.fasta
+*.fa
+*.faa
+*.fas
+*.fna
+
+# Structures / topologies
+*.pdb
+*.cif
+*.mmcif
+*.psf
+*.gro
+
+# Analysis dumps
+*.npy
+*.npz
+*.pkl
+*.pickle
+
+# ---------------------------------------------------------------------------
+# Cluster / SLURM
+# ---------------------------------------------------------------------------
+slurm-*.out
+*.out
+*.err
+core.*
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# ---------------------------------------------------------------------------
+# Editors / OS
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*:Zone.Identifier

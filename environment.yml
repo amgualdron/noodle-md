@@ -1,0 +1,13 @@
+# Everything noodle-md needs. setup.sh builds this into ./env
+# (CPU build of HOOMD; on a GPU workstation change "cpu*" to "gpu*").
+name: noodle-md
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - hoomd>=7.2,<8=cpu*
+  - gsd
+  - numpy
+  - pyyaml
+  - pandas        # ./analyze-run only
+  - mdanalysis    # ./analyze-run only

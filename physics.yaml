@@ -1,0 +1,74 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Named physics settings. A run picks one or more of these by name in its run.yaml.
+#
+# A set written as `extends: <other set>` starts from every setting of <other set>
+# and only lists what it changes. When a run is launched, the sets it uses are copied
+# (fully written out) into runs/<run name>/physics.yaml, so editing this file later
+# never changes a run that already exists.
+#
+# Units: nm, kcal/mol, g/mol, elementary charge. The time unit that follows from these
+# is 0.489 ps (so dt: 0.01 is ~4.9 fs). Derived quantities (kT, Debye length, step
+# counts) are computed in src/forcefield.py and src/simulate.py.
+# ─────────────────────────────────────────────────────────────────────────────
+
+baseline:
+  description: "Single free chain in solution, HPS model, room temperature, 150 mM salt"
+  geometry: bulk                      # bulk: one chain in a large periodic box
+
+  # Thermodynamic state
+  temperature_K: 298
+  ionic_concentration_M: 0.150        # sets the Debye screening length (~0.79 nm here)
+
+  # Residue-residue force field (HPS, Dignon et al. 2018)
+  epsilon_lj: 0.1                     # LJ well depth, kcal/mol
+  lj_r_cut: 3.5                       # nm
+  yukawa_r_cut: 3.5                   # nm
+  harmonic_k: 1920                    # bond stiffness, kcal/mol/nm^2
+  harmonic_r0: 0.38                   # bond length, nm
+
+  box_size: 500                       # nm; cubic box for bulk, box width (x and y) for grafted
+
+  # Integration and run length
+  dt: 0.01                            # time step, in units of 0.489 ps
+  # steps = multiplier * N^2.2 / dt  (N = number of residues), i.e. lengths grow with
+  # the chain's relaxation time. These multipliers are a rule of thumb from experience
+  # with free (bulk) chains; grafted chains may need different ones.
+  rouse_multiplier: 2                 # equilibration length
+  production_multiplier: 22           # production length
+  equilibration_steps:                # leave empty to use the multipliers; a number overrides
+  production_steps:
+  frames: 3000                        # frames saved, evenly spaced over production
+
+grafted:
+  extends: baseline
+  description: "Chain grafted by its N-terminus to a neutral, purely repulsive surface"
+  geometry: grafted
+  graft_terminus: N                   # N | C: which end is attached to the surface
+
+  # Residue-surface interaction (see wall_forces in src/forcefield.py)
+  wall_potential: lj93                # lj93: smooth continuum surface | lj126: plain 12-6 LJ
+  wall_sigma: 0.5                     # nm, combined with each residue's sigma
+  wall_epsilon: 0.1                   # kcal/mol, same strength as the residue pairs
+  wall_attraction: 0.0                # 0 = purely repulsive. 0..1 turns on an attractive well,
+                                      #   like the hydropathy lambda between residues
+  wall_attraction_scale: hydropathy   # hydropathy: well scales with each residue's lambda
+                                      # uniform: same well for every residue
+  wall_r_cut: 3.5                     # nm, range of the attractive part
+  wall_charge_density: 0.0            # e/nm^2 on the surface; screened with the same Debye
+                                      #   length as the residues. 0 = neutral surface
+  wall_headroom: 2.0                  # nm; ceiling sits at contour length + this above the surface
+
+# ── Quick tests: tiny fixed-length runs, NOT physically meaningful ────────────
+test_bulk:
+  extends: baseline
+  description: "Smoke test: a few seconds per task"
+  equilibration_steps: 2000
+  production_steps: 20000
+  frames: 20
+
+test_grafted:
+  extends: grafted
+  description: "Smoke test: a few seconds per task"
+  equilibration_steps: 2000
+  production_steps: 20000
+  frames: 20
