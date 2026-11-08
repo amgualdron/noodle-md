@@ -1,4 +1,4 @@
-"""./launch-run <run name>  --  start (or continue) every unfinished task of a run.
+"""./noodle launch <run name>  --  start (or continue) every unfinished task of a run.
 
 The first time, it reads run.yaml + your CSV, checks the settings, shows the plan (how
 many tasks, how long, how much disk) and asks before doing anything. If you say yes, it
@@ -27,7 +27,7 @@ from statistics import median
 
 import yaml
 
-from runs import (ROOT, about, read_log, read_submissions, read_tasks, run_from_command_line,
+from runs import (ROOT, SEQUENCES, about, read_log, read_submissions, read_tasks, run_from_command_line,
                   run_lengths, slurm_queue)
 
 # The 20 standard amino acids: the same letters as the residue table in forcefield.py
@@ -109,12 +109,25 @@ def select_rows(rows, setting):
     return rows[first - 1:last]
 
 
+def sequence_file(run_dir, settings):
+    """The CSV named by sequences_csv: in the run folder if it is there, else in sequences/.
+
+    The shared sets in sequences/ are read in place (no copy needed): the sequences a run
+    uses are written into its tasks.csv at the first launch, so changing or replacing a
+    file in sequences/ later never changes a run that has been launched.
+    """
+    for folder in (run_dir, SEQUENCES):
+        if (folder / settings["sequences_csv"]).is_file():
+            return folder / settings["sequences_csv"]
+    shared = ", ".join(sorted(p.name for p in SEQUENCES.glob("*.csv")))
+    sys.exit(f"Can't find the sequence file '{settings['sequences_csv']}' in runs/{run_dir.name}/ "
+             f"or in sequences/ ({shared or 'empty'}). Copy it into runs/{run_dir.name}/ "
+             "or fix sequences_csv in run.yaml.")
+
+
 def read_sequences(run_dir, settings):
     """({name: sequence}, [names skipped]) for the selected rows of the run's CSV."""
-    csv_path = run_dir / settings["sequences_csv"]
-    if not csv_path.exists():
-        sys.exit(f"Can't find the sequence file {csv_path}. Copy it into runs/{run_dir.name}/ "
-                 "or fix sequences_csv in run.yaml.")
+    csv_path = sequence_file(run_dir, settings)
     with open(csv_path, newline="", encoding="utf-8-sig") as f:
         rows = list(csv.DictReader(f))
     name_col, seq_col = settings["name_column"], settings["sequence_column"]
@@ -203,6 +216,15 @@ def describe_physics(p):
     return f"{where}; {p['temperature_K']:g} K, {1000 * p['ionic_concentration_M']:g} mM salt"
 
 
+def surface_potential(p):
+    """e psi / kT at a charged surface: 4 pi l_B sigma / kappa (linearised Debye-Huckel,
+    salt water on one side, as in forcefield.charged_surface)."""
+    from forcefield import debye_huckel  # imports HOOMD, which the plan loads anyway
+
+    bjerrum, kappa = debye_huckel(p["temperature_K"], p["ionic_concentration_M"])
+    return 4 * math.pi * bjerrum * p["wall_charge_density"] / kappa
+
+
 def in_words(number):
     """1_800_000 -> '1.8 million'."""
     for size, word in ((1e9, "billion"), (1e6, "million"), (1e3, "thousand")):
@@ -221,7 +243,7 @@ def file_size(n_bytes):
 def measure_speed(sequence, physics):
     """Steps per second for this sequence on this computer, from a few seconds of simulation.
 
-    HOOMD is imported only here, so the rest of ./launch-run stays quick.
+    HOOMD is imported only here, so the rest of ./noodle launch stays quick.
     """
     from simulate import add_forces, create_simulation, starting_snapshot, system_geometry
 
@@ -242,16 +264,22 @@ def show_plan(run_dir, settings, sequences, skipped, physics, tasks, on_cluster)
     print()
     sizes = (f"{lengths[0]} residues" if lengths[0] == lengths[-1] else
              f"{lengths[0]} to {lengths[-1]} residues (median {median(lengths):.0f})")
-    print(f"Sequences  {settings['sequences_csv']}, rows {settings['rows']}: {len(sequences)} proteins, {sizes}")
+    csv_path = sequence_file(run_dir, settings).relative_to(ROOT)
+    print(f"Sequences  {csv_path}, rows {settings['rows']}: {len(sequences)} proteins, {sizes}")
     if skipped:
         print(f"           skipped {len(skipped)} with letters other than the 20 standard amino acids: "
               + ", ".join(skipped[:5]) + (", ..." if len(skipped) > 5 else ""))
 
     print("Physics")
     for name, p in physics.items():
-        print(f"  {name:16s} {describe_physics(p)}")
+        print(f"  {name:20s} {describe_physics(p)}")
+        if p["geometry"] == "grafted" and p["wall_charge_density"] != 0:
+            psi = surface_potential(p)
+            print(f"  {'':20s} surface potential {psi:+.2f} kT/e"
+                  + ("" if abs(psi) <= 1 else ": [!] above ~1 kT/e the linearised (Debye-Huckel) "
+                     "surface overestimates its pull; consider a smaller wall_charge_density or more salt"))
         if name.startswith("test_"):
-            print(f"  {'':16s} [!] a quick-test set: tiny run length, results are NOT physically meaningful")
+            print(f"  {'':20s} [!] a quick-test set: tiny run length, results are NOT physically meaningful")
     print(f"Tasks      {len(sequences)} proteins x {len(physics)} physics set(s) x "
           f"{settings['replicates']} replicate(s) = {len(tasks)} tasks")
 
@@ -260,7 +288,7 @@ def show_plan(run_dir, settings, sequences, skipped, physics, tasks, on_cluster)
         shortest, longest = (sum(run_lengths(p, n)[:2]) for n in (lengths[0], lengths[-1]))
         steps = (in_words(shortest) if shortest == longest else
                  f"{in_words(shortest)} (N={lengths[0]}) to {in_words(longest)} (N={lengths[-1]})")
-        print(f"  {name:16s} {steps}, saving {p['frames']} frames")
+        print(f"  {name:20s} {steps}, saving {p['frames']} frames")
 
     # Time: one short test simulation of the longest protein. The cost of a step grows
     # about in proportion to the number of residues, which gives every other protein's speed.
@@ -278,7 +306,7 @@ def show_plan(run_dir, settings, sequences, skipped, physics, tasks, on_cluster)
         too_long = [s for s in seconds if s > limit]
         if too_long:
             print(f"           [!] {len(too_long)} task(s) need longer than the {settings['time_limit_days']:g}-day time "
-                  f"limit: they will stop and need ./launch-run again ({math.ceil(max(seconds) / limit) - 1} "
+                  f"limit: they will stop and need ./noodle launch again ({math.ceil(max(seconds) / limit) - 1} "
                   "time(s) for the longest), unless you raise time_limit_days now")
     else:
         print("           here, without SLURM, the tasks run one after another, so the total is the waiting time")
@@ -292,7 +320,7 @@ def show_plan(run_dir, settings, sequences, skipped, physics, tasks, on_cluster)
         extra = f", extra sbatch options: {' '.join(settings['extra_sbatch'])}" if settings["extra_sbatch"] else ""
         print(f"Cluster    {len(tasks)} SLURM jobs, time limit {settings['time_limit_days']:g} day(s) each, {at_once}{extra}")
     else:
-        print("Where      no SLURM here: the tasks run in this terminal (Ctrl-C stops, ./launch-run continues)")
+        print("Where      no SLURM here: the tasks run in this terminal (Ctrl-C stops, ./noodle launch continues)")
     print()
     print("Once launched, the run is frozen: only time_limit_days, max_running and extra_sbatch can still change.")
 
@@ -341,7 +369,7 @@ def plan_relaunch(run_dir, on_cluster):
         for i in failed[:10]:
             print(f"  task {i:>4}  {names[i]}: {logs[i]['error']}")
         if len(failed) > 10:
-            print(f"  ... and {len(failed) - 10} more (./status {run_dir.name} lists them all)")
+            print(f"  ... and {len(failed) - 10} more (./noodle status {run_dir.name} lists them all)")
         print("They will most likely fail again unless the cause has been fixed"
               + (f" (full messages in runs/{run_dir.name}/slurm/)." if on_cluster else "."))
         if confirm("Start the failed tasks again anyway?"):
@@ -394,7 +422,7 @@ def submit_to_slurm(run_dir, settings, task_ids):
         job_id = result.stdout.strip().split(";")[0]
         jobs.update({i: f"{job_id}_{i - offset}" for i in ids})
 
-        # Record which SLURM job runs which task, so ./status can find it in the queue.
+        # Record which SLURM job runs which task, so ./noodle status can find it in the queue.
         submissions = run_dir / "slurm" / "submissions.csv"
         is_new_file = not submissions.exists()
         with open(submissions, "a", newline="") as f:
@@ -412,13 +440,13 @@ def submit_to_slurm(run_dir, settings, task_ids):
         print(f"Confirmed: {found} of {len(jobs)} task(s) are in the SLURM queue.")
     else:
         print(f"Only {found} of {len(jobs)} task(s) are in the SLURM queue; the others may have "
-              f"finished or failed already: see ./status {name}")
-    print(f"Check on them any time with:  ./status {name}")
+              f"finished or failed already: see ./noodle status {name}")
+    print(f"Check on them any time with:  ./noodle status {name}")
 
 
 def run_here(run_dir, task_ids):
     print(f"No SLURM here: running {len(task_ids)} task(s) one after another. "
-          f"Ctrl-C stops; ./launch-run {run_dir.name} again resumes.\n")
+          f"Ctrl-C stops; ./noodle launch {run_dir.name} again resumes.\n")
     for n, task_id in enumerate(task_ids, 1):
         print(f"── task {task_id} ({n} of {len(task_ids)}) ──")
         result = subprocess.run([sys.executable, str(ROOT / "src" / "simulate.py"), str(run_dir), str(task_id)])
@@ -431,7 +459,7 @@ def run_here(run_dir, task_ids):
 
 
 def main():
-    run_dir = run_from_command_line("./launch-run <run name>")
+    run_dir = run_from_command_line("./noodle launch <run name>")
     settings = yaml.safe_load((run_dir / "run.yaml").read_text())
     check_run_settings(settings)
     on_cluster = shutil.which("sbatch") is not None

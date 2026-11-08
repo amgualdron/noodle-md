@@ -1,4 +1,4 @@
-# Everything noodle-md needs. setup.sh builds this into ./env
+# Everything noodle-md needs. setup.sh (in the noodle-md folder) builds this into ./env
 # (CPU build of HOOMD; on a GPU workstation change "cpu*" to "gpu*").
 name: noodle-md
 channels:
@@ -9,5 +9,5 @@ dependencies:
   - gsd
   - numpy
   - pyyaml
-  - pandas        # ./analyze-run only
-  - mdanalysis    # ./analyze-run only
+  - pandas        # ./noodle analyze only
+  - mdanalysis    # ./noodle analyze only

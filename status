@@ -1,8 +1,0 @@
-#!/bin/bash
-# ./status <run name>: report on one run: done, running, waiting, stopped.
-# (This only starts src/status.py with the tool's own Python, see setup.sh.)
-cd "$(dirname "$(readlink -f "$0")")" || exit 1
-if [ ! -x env/bin/python ]; then echo "The environment is missing: run setup.sh first (see README)."; exit 1; fi
-export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1  # without these numpy crashes on cluster login nodes
-export PYTHONUNBUFFERED=1                         # show messages right away, in order
-exec env/bin/python src/status.py "$@"

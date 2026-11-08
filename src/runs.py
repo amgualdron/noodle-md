@@ -1,12 +1,12 @@
-"""Small helpers shared by the commands (new-run, launch-run, status, analyze-run) and simulate.py.
+"""Small helpers shared by the commands (./noodle new, launch, status, analyze) and simulate.py.
 
 A task's log (logs/task_0001.json) has a "status": "running" while it runs (or until
 it is stopped), "completed" when done, or "failed" if it ended with an error (the
 error message is then in its "error" field).
 
 Every file in a run folder has exactly one program that writes it, so programs
-running at the same time (./launch-run on the login node, tasks on the cluster,
-./status) can never overwrite each other's information:
+running at the same time (./noodle launch on the login node, tasks on the cluster,
+./noodle status) can never overwrite each other's information:
     run.yaml                      you
     tasks.csv, physics.yaml       launch_run.py, once, on the first launch
     slurm/submissions.csv         launch_run.py, one line per task each time it is submitted
@@ -26,6 +26,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent  # the noodle-md folder
 RUNS = ROOT / "runs"
+SEQUENCES = ROOT / "sequences"  # the shared sequence sets
 
 
 # ── Choosing a run ────────────────────────────────────────────────────────────
@@ -33,7 +34,7 @@ def list_runs():
     """Print every run folder with its description."""
     runs = sorted(p for p in RUNS.glob("*") if (p / "run.yaml").exists()) if RUNS.exists() else []
     if not runs:
-        print("There are no runs yet. Make one with ./new-run <run name>")
+        print("There are no runs yet. Make one with ./noodle new <run name>")
         return
     print("Existing runs:")
     for run_dir in runs:
@@ -78,7 +79,7 @@ def update_log(run_dir, task_id, **fields):
     """Add or change fields in a task's log. Only simulate.py calls this.
 
     The log is written to a temporary file which then replaces the old one in a single
-    step, so ./status never reads a half-written log.
+    step, so ./noodle status never reads a half-written log.
     """
     path = log_path(run_dir, task_id)
     path.parent.mkdir(exist_ok=True)

@@ -1,14 +1,14 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
 # One-time setup: builds the tool's own Python environment in ./env from
-# environment.yml, then checks the physics (src/check_physics.py).
+# src/environment.yml, then checks the physics (src/check_physics.py).
 #
 #   on the cluster:          sbatch setup.sh     (builds on a compute node; ~15-30 min;
 #                                                  progress and result in setup.log)
 #   on your own computer:    bash setup.sh
 #
-# After this you never need to load or activate conda again: the commands
-# (./new-run, ./launch-run, ./status, ./analyze-run) call ./env/bin/python directly.
+# After this you never need to load or activate conda again: ./noodle calls
+# ./env/bin/python directly.
 # To rebuild from scratch, delete the env folder and run this again.
 # ─────────────────────────────────────────────────────────────────────────────
 #SBATCH --job-name=noodle-setup
@@ -32,11 +32,11 @@ if [ -d env ]; then
     exit 1
 fi
 
-echo "Building ./env from environment.yml ($(date))"
+echo "Building ./env from src/environment.yml ($(date))"
 if command -v mamba > /dev/null; then
-    mamba env create --prefix ./env --file environment.yml || exit 1
+    mamba env create --prefix ./env --file src/environment.yml || exit 1
 else
-    conda env create --prefix ./env --file environment.yml || exit 1
+    conda env create --prefix ./env --file src/environment.yml || exit 1
 fi
 
 echo
@@ -44,4 +44,4 @@ echo
 echo
 ./env/bin/python src/check_physics.py || exit 1
 echo
-echo "Setup finished ($(date)). Start a run with:  ./new-run <run name>"
+echo "Setup finished ($(date)). Start a run with:  ./noodle new <run name>"

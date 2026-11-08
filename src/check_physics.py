@@ -102,7 +102,7 @@ def main():
     check("negative surface attracts lysine and repels glutamate",
           wall_energy_and_force(physics, "K", 1.0)[1] < 0 < wall_energy_and_force(physics, "E", 1.0)[1])
 
-    print("Short simulations (bulk, and grafted with attraction and charge switched on)")
+    print("Short simulations (bulk; grafted with attraction and charge; the grafted_charged set)")
     with tempfile.TemporaryDirectory() as tmp:
         run_dir = Path(tmp)
         (run_dir / "logs").mkdir()
@@ -111,6 +111,7 @@ def main():
                 "grafted": dict(resolve_physics(ALL_SETS, "test_grafted"),
                                 wall_attraction=0.3, wall_charge_density=-0.05)}
         sets["grafted_C_terminus"] = dict(sets["grafted"], graft_terminus="C")
+        sets["grafted_charged"] = resolve_physics(ALL_SETS, "test_grafted_charged")
         (run_dir / "physics.yaml").write_text(yaml.safe_dump(sets))
         sequence = "MSEQKKPLGEGFDNRYSTWAVHIC"
         names = list(sets)

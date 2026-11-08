@@ -1,0 +1,31 @@
+#!/bin/bash
+# ─────────────────────────────────────────────────────────────────────────────
+# ./noodle <command> <run name>     the one command of noodle-md (see README)
+#
+#   ./noodle new     <run>   make a run folder with a settings file to fill in
+#   ./noodle launch  <run>   start it (and resume anything that stopped)
+#   ./noodle status  [run]   see how it's going (no name: list every run)
+#   ./noodle analyze <run>   turn finished simulations into CSV tables
+#   ./noodle check           physics self-test (setup.sh runs it too)
+#
+# This only starts the matching program in src/ with the tool's own Python (env/,
+# made by setup.sh), so conda never needs to be loaded or activated.
+# ─────────────────────────────────────────────────────────────────────────────
+cd "$(dirname "$(readlink -f "$0")")" || exit 1
+
+case "$1" in
+    new)     program=new_run.py ;;
+    launch)  program=launch_run.py ;;
+    status)  program=status.py ;;
+    analyze) program=analyze_run.py ;;
+    check)   program=check_physics.py ;;
+    *)
+        sed -n '4,9p' "$0" | sed 's/^# \{0,1\}//'
+        exit 1 ;;
+esac
+shift
+
+if [ ! -x env/bin/python ]; then echo "The environment is missing: run setup.sh first (see README)."; exit 1; fi
+export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1  # without these numpy crashes on cluster login nodes
+export PYTHONUNBUFFERED=1                         # show messages right away, in order
+exec env/bin/python "src/$program" "$@"

@@ -1,11 +1,11 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-# The SLURM job that ./launch-run submits. You never run this yourself.
+# The SLURM job that ./noodle launch submits. You never run this yourself.
 #
 # It is submitted as a job array: every array element runs one task of the run,
 #     task id = <offset> + array index      (offset is 0 unless the run has more
 #                                            tasks than the cluster's array limit)
-# ./launch-run adds the job name, time limit, array range and output file.
+# ./noodle launch adds the job name, time limit, array range and output file.
 # Arguments: <run folder> <offset>
 # ─────────────────────────────────────────────────────────────────────────────
 #SBATCH --nodes=1

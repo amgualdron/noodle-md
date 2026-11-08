@@ -58,6 +58,16 @@ grafted:
                                       #   length as the residues. 0 = neutral surface
   wall_headroom: 2.0                  # nm; ceiling sits at contour length + this above the surface
 
+grafted_charged:
+  extends: grafted
+  description: "Chain grafted by its N-terminus to a negatively charged, otherwise repulsive surface"
+  # Negative: attracts K, R (and H, +0.5), repels D, E. Flip the sign for a positive surface.
+  # The surface is screened linearised Debye-Huckel, which is accurate while the surface
+  # potential |e psi / kT| = 4 pi l_B |sigma| / kappa stays below ~1 (it overestimates the
+  # pull beyond that). At 298 K, 150 mM: -0.1 e/nm^2 -> 0.7 kT/e; -0.2 -> 1.4.
+  # ./noodle launch prints this number for every charged set.
+  wall_charge_density: -0.1           # e/nm^2, i.e. one elementary charge per 10 nm^2
+
 # ── Quick tests: tiny fixed-length runs, NOT physically meaningful ────────────
 test_bulk:
   extends: baseline
@@ -68,6 +78,13 @@ test_bulk:
 
 test_grafted:
   extends: grafted
+  description: "Smoke test: a few seconds per task"
+  equilibration_steps: 2000
+  production_steps: 20000
+  frames: 20
+
+test_grafted_charged:
+  extends: grafted_charged
   description: "Smoke test: a few seconds per task"
   equilibration_steps: 2000
   production_steps: 20000

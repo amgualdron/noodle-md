@@ -1,29 +1,37 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Settings for the run "RUN_NAME" (created CREATED).
 #
-#   1. Put your sequence CSV in this folder (runs/RUN_NAME/).
+#   1. Pick a sequence set below (or put your own CSV in runs/RUN_NAME/).
 #   2. Fill in the settings below.
-#   3. Start it:            ./launch-run RUN_NAME
-#   4. Check on it:         ./status RUN_NAME
+#   3. Start it:            ./noodle launch RUN_NAME
+#   4. Check on it:         ./noodle status RUN_NAME
 # ─────────────────────────────────────────────────────────────────────────────
 
-description: ""                 # one line: what is this run for? (shown by ./status)
+description: ""                 # one line: what is this run for? (shown by ./noodle status)
 
 # ── Sequences ─────────────────────────────────────────────────────────────────
-sequences_csv: sequences.csv    # your CSV file, in this folder
-name_column: ID                 # column with a unique name for each protein
-sequence_column: Sequence       # column with the one-letter amino-acid sequence
+# A CSV file in this run folder, or one of the shared sets in sequences/ by its name:
+#   human_idrs_12k.csv    12,000 human IDRs and IDPs     name_column: chain   sequence_column: sequence
+#                         (ordered for diversity: rows 1-N are the N most different picks)
+#   mobidb_idps_77k.csv   77,644 IDPs from MobiDB        name_column: ID      sequence_column: Sequence
+sequences_csv: human_idrs_12k.csv
+name_column: chain              # column with a unique name for each protein
+sequence_column: sequence       # column with the one-letter amino-acid sequence
 rows: all                       # which rows to run: all, a single row like 7, or a
                                 #   range like 101-200 (counted from 1, header not counted)
 
 # ── Physics ───────────────────────────────────────────────────────────────────
-physics: baseline               # a set from physics.yaml, or several: [grafted, baseline]
+physics: baseline               # a set from physics.yaml, or several in one run, e.g.
+                                #   baseline         free chain in solution
+                                #   grafted          grafted to a neutral surface
+                                #   grafted_charged  grafted to a charged surface
+                                #   [baseline, grafted, grafted_charged]
 replicates: 1                   # independent copies (different random seeds) of each
                                 #   protein under each physics set
 
 # ── Cluster (ignored when running on your own computer) ───────────────────────
 time_limit_days: 3              # time limit per task, in days (decimals are fine: 0.5 = 12 hours).
                                 #   A task that runs out of time keeps its progress:
-                                #   ./launch-run again resumes it from its last hourly checkpoint.
+                                #   ./noodle launch again resumes it from its last hourly checkpoint.
 max_running: 0                  # most tasks running at the same time (0 = no limit)
 extra_sbatch: []                # anything else your cluster needs, e.g. ["--partition=normal"]

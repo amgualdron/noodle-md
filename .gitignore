@@ -24,7 +24,7 @@ runs/
 *.hdf5
 *.tmp
 
-# Sequence files (the examples/ CSVs are tracked; raw FASTA is not)
+# Sequence files (the sequences/ CSVs are tracked; raw FASTA is not)
 *.fasta
 *.fa
 *.faa

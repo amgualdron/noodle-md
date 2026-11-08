@@ -2,13 +2,13 @@
 
     env/bin/python src/simulate.py runs/<run name> <task id>
 
-You normally never call this yourself: ./launch-run does it, once per task.
+You normally never call this yourself: ./noodle launch does it, once per task.
 
 Everything a task needs comes from its run folder:
     tasks.csv      which sequence, physics set and random seed this task uses
     physics.yaml   the physics settings, frozen when the run was launched
 and everything it produces goes back there:
-    logs/task_0001.json               status and progress (read by ./status)
+    logs/task_0001.json               status and progress (read by ./noodle status)
     trajectories/task_0001_<name>.gsd production frames
     checkpoints/task_0001.gsd         full state saved every hour, deleted when done
 
@@ -291,7 +291,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as error:
-        # Record the error for ./status and ./launch-run, then stop with the full
+        # Record the error for ./noodle status and ./noodle launch, then stop with the full
         # message (it ends up in the task's slurm/ output file, or on screen).
         update_log(Path(sys.argv[1]), int(sys.argv[2]), status="failed",
                    error=f"{type(error).__name__}: {error}", last_update=now())

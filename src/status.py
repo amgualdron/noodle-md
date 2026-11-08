@@ -1,4 +1,4 @@
-"""./status <run name>  --  everything about one run: done, running, waiting, stopped, failed.
+"""./noodle status <run name>  --  everything about one run: done, running, waiting, stopped, failed.
 
 The report is printed and also saved as runs/<run name>/status.txt.
 
@@ -59,14 +59,14 @@ def task_state(log, slurm_job, queue):
     if alive:
         return "running", f"{log.get('phase', 'starting')} {percent:.0f}%, {left} left"
     return "stopped", (f"stopped at {percent:.0f}% after {duration(log.get('run_time_s', 0))}, "
-                       f"needs {left} more: ./launch-run resumes it")
+                       f"needs {left} more: ./noodle launch resumes it")
 
 
 def main():
-    run_dir = run_from_command_line("./status <run name>")
+    run_dir = run_from_command_line("./noodle status <run name>")
     settings = yaml.safe_load((run_dir / "run.yaml").read_text())
     if not (run_dir / "tasks.csv").exists():
-        print(f"'{run_dir.name}' has not been launched yet: ./launch-run {run_dir.name}")
+        print(f"'{run_dir.name}' has not been launched yet: ./noodle launch {run_dir.name}")
         return
 
     tasks = read_tasks(run_dir)
@@ -95,7 +95,7 @@ def main():
     def task_line(r):
         t = r["task"]
         return (f"  task {t['task_id']:>4}  {t['sequence_name'][:24]:24s} N={t['length']:<5} "
-                f"{t['physics'][:14]:14s} {r['state']:8s} {r['details']}")
+                f"{t['physics'][:20]:20s} {r['state']:8s} {r['details']}")
 
     if len(rows) <= LIST_ALL_UP_TO:
         lines += [task_line(r) for r in rows]
@@ -118,7 +118,7 @@ def main():
         lines += ["", f"{counts['failed']} task(s) failed with the error shown (full message in "
                       f"runs/{run_dir.name}/slurm/ on the cluster). Fix the cause before relaunching them."]
     if counts["stopped"]:
-        lines += ["", f"{counts['stopped']} task(s) stopped. ./launch-run {run_dir.name} resumes them "
+        lines += ["", f"{counts['stopped']} task(s) stopped. ./noodle launch {run_dir.name} resumes them "
                       "(tasks still in the queue are left alone)."]
     if counts["done"] == len(rows):
         lines += ["", "All tasks are done."]

@@ -1,4 +1,4 @@
-"""./analyze-run <run name>  --  per-frame shape of every completed trajectory.
+"""./noodle analyze <run name>  --  per-frame shape of every completed trajectory.
 
 For every protein and physics set, pools all completed replicates into
     runs/<run name>/timeseries/<physics set>/<protein>_pooled_timeseries.csv
@@ -39,7 +39,7 @@ def trajectory_metrics(gsd_path):
 
 
 def main():
-    run_dir = run_from_command_line("./analyze-run <run name>")
+    run_dir = run_from_command_line("./noodle analyze <run name>")
     tasks = pd.DataFrame(read_tasks(run_dir))
 
     for (protein, physics), group in tasks.groupby(["sequence_name", "physics"], sort=False):
