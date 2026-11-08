@@ -10,12 +10,15 @@
 description: ""                 # one line: what is this run for? (shown by ./noodle status)
 
 # ── Sequences ─────────────────────────────────────────────────────────────────
-# A CSV file in this run folder, or one of the shared sets in sequences/ by its name:
-#   human_idrs_12k.csv    12,000 human IDRs and IDPs     name_column: chain   sequence_column: sequence
-#                         (ordered for diversity: rows 1-N are the N most different picks)
-#   mobidb_idps_77k.csv   77,644 IDPs from MobiDB        name_column: ID      sequence_column: Sequence
+# A CSV file in this run folder, or one of the shared sets in sequences/ by its name.
+# Both shared sets have the columns id and sequence, so the two column settings below
+# fit either one as they are:
+#   human_idrs_12k.csv   12,000 human IDRs and IDPs, ordered for diversity
+#                        (rows 1-N are the N most different picks)
+#   mobidb_idps_15k.csv  15,000 IDPs from MobiDB: rows 1-11273 ordered for diversity,
+#                        rows 11274-15000 picked at random
 sequences_csv: human_idrs_12k.csv
-name_column: chain              # column with a unique name for each protein
+name_column: id                 # column with a unique name for each protein
 sequence_column: sequence       # column with the one-letter amino-acid sequence
 rows: all                       # which rows to run: all, a single row like 7, or a
                                 #   range like 101-200 (counted from 1, header not counted)

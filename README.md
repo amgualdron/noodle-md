@@ -80,23 +80,27 @@ Pick a name that says what it is (letters, digits, `_ - .`). This creates
 Two protein sets come with the code, in `sequences/`. A run uses one of them by naming
 it in `run.yaml` (step 3); there's nothing to copy.
 
-| file | what | proteins | lengths | `name_column` | `sequence_column` |
-|---|---|---|---|---|---|
-| `human_idrs_12k.csv` | IDRs and whole IDPs of the human proteome | 12,000 | 20-599 (median 54) | `chain` | `sequence` |
-| `mobidb_idps_77k.csv` | IDPs from MobiDB | 77,644 | 20-500 (median 213) | `ID` | `Sequence` |
+| file | what | proteins | lengths |
+|---|---|---|---|
+| `human_idrs_12k.csv` | IDRs and whole IDPs of the human proteome | 12,000 | 20-599 (median 54) |
+| `mobidb_idps_15k.csv` | IDPs from MobiDB (a subsample of its 77k disordered proteins) | 15,000 | 20-500 (median 190) |
 
-- **`human_idrs_12k.csv` is ordered for diversity.** Each row was picked to be as
-  different as possible from all the rows above it (the `radius_at_pick` column
-  shrinks down the file). So `rows: 1-500` gives the 500 most mutually different
-  sequences, and `rows: 501-1000` the next 500. Its other columns (`tier`, `kind`, `fcr`,
-  `scd_pos`/`scd_neg`, ...) describe each sequence and are ignored by the simulations.
-- **`mobidb_idps_77k.csv`**: 1,347 of its sequences contain letters other than the 20
-  standard amino acids (`X`, `U`, ...). They are skipped automatically, with a message.
+Both have the protein's name in the column `id` and its sequence in the column
+`sequence`, which is what a new `run.yaml` already says (`name_column: id`,
+`sequence_column: sequence`). Their other columns (`fcr`, `scd_pos`/`scd_neg`,
+`mean_hydro`, ...) describe each sequence and are ignored by the simulations.
+
+- **Both are ordered for diversity.** Each row was picked to be as different as
+  possible from all the rows above it (the `radius_at_pick` column shrinks down the
+  file). So `rows: 1-500` gives the 500 most mutually different sequences, and
+  `rows: 501-1000` the next 500.
+- **Except the end of `mobidb_idps_15k.csv`:** rows 11274-15000 (`source: random`) were
+  picked at random rather than for diversity.
 
 **Your own sequences:** put a CSV file in the run folder. It needs a column with a
 **unique name** per protein and a column with the **one-letter sequence**; other columns
-are ignored. A file in the run folder takes precedence over one of the same name in
-`sequences/`.
+are ignored. Naming them `id` and `sequence` saves editing `run.yaml`. A file in the run
+folder takes precedence over one of the same name in `sequences/`.
 
 ```bash
 cp my_sequences.csv runs/grafted_charged_top500/
@@ -114,7 +118,7 @@ nano runs/grafted_charged_top500/run.yaml     # arrows to move, Ctrl-O Enter to 
 |---|---|---|
 | `description` | one line about the run, shown by `./noodle status` | `"Top-500 human IDRs, -0.1 e/nm^2 wall"` |
 | `sequences_csv` | a set from `sequences/`, or your CSV in the run folder | `human_idrs_12k.csv` |
-| `name_column`, `sequence_column` | the CSV columns with the names and the sequences (table in step 2) | `chain`, `sequence` |
+| `name_column`, `sequence_column` | the CSV columns with the names and the sequences; already right for the shared sets | `id`, `sequence` |
 | `rows` | `all`, one row (`7`) or a range (`101-200`); row 1 is the first protein | `1-500` |
 | `physics` | one physics set from `physics.yaml`, or a list of several (section 3) | `grafted_charged` or `[grafted, grafted_charged]` |
 | `replicates` | independent copies (different random seeds) of each protein | `3` |

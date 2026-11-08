@@ -1,4 +1,4 @@
-pick,chain,kind,accession,entry,gene,description,whole_protein,start,end,mean_disorder,N,scd_pos,scd_neg,mean_hydro,contact_energy,fcr,patch_neg,patch_neu,frac_sticky,radius_at_pick,tier,sequence
+pick,id,kind,accession,entry,gene,description,whole_protein,start,end,mean_disorder,N,scd_pos,scd_neg,mean_hydro,contact_energy,fcr,patch_neg,patch_neu,frac_sticky,radius_at_pick,tier,sequence
 1,Q96BY7_idr10,idr,Q96BY7,ATG2B_HUMAN,ATG2B,Autophagy-related protein 2 homolog B,False,1733,1802,0.8637,69,0,-0.0188794,0.660493,-0.555717,0.26087,0.0294118,0.573529,0.289855,inf,confident,MTPDPEVKKSPGADVTCSLPRHLSTSKEPNLVISFSGPKQPSQNDSANSVEVVNGMEEKNFSAEEASFR
 2,Q7Z6M4_idr2,idr,Q7Z6M4,MTEF4_HUMAN,MTERF4,"Transcription termination factor 4, mitochondrial",False,322,381,0.9157,59,2.35889,0,0.448186,-1.43846,0.79661,0.637931,0.0862069,0.0169492,21.2458,caution,EEEESESSTSDDKRASLDEDEDDDDEEDNDEDDNDEDDDDEDDDEAEDNDEDEDDDEEE
 3,A0A3B3IU63_idr2,idr,A0A3B3IU63,H2AL3_HUMAN,H2AL3,Histone H2A-like 3,False,102,148,0.7485,46,0,-0.739751,0.48,3.41407,0.608696,0.244444,0.288889,0.152174,18.3204,caution,THSQVEEMPQSEEEEEEEEEKEEEMVVLVVMGGRRRRRRRRRRKDS
