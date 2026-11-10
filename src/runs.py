@@ -18,6 +18,7 @@ running at the same time (./noodle launch on the login node, tasks on the cluste
 import csv
 import getpass
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -102,7 +103,28 @@ def read_submissions(run_dir):
         return {int(row["task_id"]): row["slurm_job"] for row in csv.DictReader(f)}
 
 
-# ── Run length and time ───────────────────────────────────────────────────────
+# ── Brush size, run length and time ───────────────────────────────────────────
+def brush_size(physics):
+    """(chains, box width in nm): how many chains a task simulates, and how wide its box is.
+
+    Bulk, and grafted with grafting_density 0: one chain in a box box_size wide.
+    A brush (grafting_density > 0): `chains` chains on a square lattice, grafting_density
+    chains per nm^2, so the box is sqrt(chains / grafting_density) wide and repeats
+    periodically in x and y, like an infinite brush. At high density that box could be
+    narrower than twice the interaction range (plus a margin), so that a residue would
+    feel two copies of the same neighbour through the periodic boundary; then the lattice
+    grows to the next square number of chains until it is wide enough.
+    """
+    density = physics.get("grafting_density") or 0  # absent in runs launched before brushes
+    if physics["geometry"] != "grafted" or density == 0:
+        return 1, physics["box_size"]
+    side = math.isqrt(physics["chains"])
+    cutoff = max(physics["lj_r_cut"], physics["yukawa_r_cut"], physics["wall_r_cut"])
+    while side / math.sqrt(density) < 2 * (cutoff + 0.5):
+        side += 1
+    return side**2, side / math.sqrt(density)
+
+
 def run_lengths(physics, n_residues):
     """Equilibration steps, production steps, and steps between saved frames.
 

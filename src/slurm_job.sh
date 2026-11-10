@@ -12,8 +12,9 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 
-# One thread per task (a single short chain gains nothing from more), and print
-# progress straight into the output file.
+# One core per task: HOOMD's CPU build runs a simulation on one core, and a run gets
+# its speed from thousands of tasks side by side (a brush too). Print progress straight
+# into the output file.
 export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 PYTHONUNBUFFERED=1
 
 TASK_ID=$(( $2 + SLURM_ARRAY_TASK_ID ))

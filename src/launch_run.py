@@ -1,7 +1,8 @@
 """./noodle launch <run name>  --  start (or continue) every unfinished task of a run.
 
 The first time, it reads run.yaml + your CSV, checks the settings, shows the plan (how
-many tasks, how many steps, how much disk) and asks before doing anything. If you say yes, it
+many tasks, how many steps, roughly how many core-hours, how much disk) and asks before
+doing anything. If you say yes, it
 writes the run's task list and starts the tasks:
     tasks.csv      one row per task: protein x physics set x replicate, with its seed
     physics.yaml   the physics sets this run uses, fully written out and frozen
@@ -26,15 +27,16 @@ from statistics import median
 
 import yaml
 
-from runs import (ROOT, SEQUENCES, compress, file_size, read_log, read_submissions, read_tasks,
-                  run_from_command_line, run_lengths, slurm_queue)
+from runs import (ROOT, SEQUENCES, about, brush_size, compress, file_size, read_log,
+                  read_submissions, read_tasks, run_from_command_line, run_lengths, slurm_queue)
 
 # The 20 standard amino acids: the same letters as the residue table in forcefield.py
 # (repeated here so this script does not have to load HOOMD).
 AMINO_ACIDS = set("ARNDCQEGHILKMFPSTWYV")
 
 RUN_SETTINGS = ["description", "sequences_csv", "name_column", "sequence_column", "rows",
-                "physics", "replicates", "time_limit_days", "max_running", "extra_sbatch"]
+                "max_residues", "physics", "replicates", "time_limit_days", "max_running", "extra_sbatch"]
+OPTIONAL = ["description", "max_residues"]  # run.yaml files made before max_residues existed lack it
 # The sets in physics.yaml that list every setting a bulk / grafted simulation needs
 REFERENCE_SETS = {"bulk": "baseline", "grafted": "grafted"}
 CHOICES = {"geometry": ["bulk", "grafted"], "graft_terminus": ["N", "C"],
@@ -42,6 +44,12 @@ CHOICES = {"geometry": ["bulk", "grafted"], "graft_terminus": ["N", "C"],
 
 BYTES_PER_RESIDUE = 12      # trajectory size per residue per frame: one position (3 x 4 bytes)
 BYTES_PER_FRAME = 100       # plus the step number and the file's index, per frame
+
+# Speed of one CPU core, for the rough cost shown before launching: residues x steps per
+# second. Measured with this force field on one core of a recent laptop: ~1.0 million for
+# single chains of 25-100 residues, 0.6-1.2 million for brushes (denser is slower). A
+# cluster core may differ by a factor ~2 either way; ./noodle status measures the real speed.
+RESIDUE_STEPS_PER_SECOND = 1.0e6
 
 
 # ── Checking the settings ─────────────────────────────────────────────────────
@@ -63,8 +71,11 @@ def check_run_settings(settings):
     problems = [f"run.yaml: unknown setting '{key}'{did_you_mean(key, RUN_SETTINGS)}"
                 for key in settings if key not in RUN_SETTINGS]
     problems += [f"run.yaml: the setting '{key}' is missing"
-                 for key in RUN_SETTINGS if key not in settings and key != "description"]
+                 for key in RUN_SETTINGS if key not in settings and key not in OPTIONAL]
     stop_if(problems)
+    max_residues = settings.get("max_residues") or 0  # missing or empty: no limit
+    if not isinstance(max_residues, int) or max_residues < 0:
+        problems.append("run.yaml: max_residues must be a whole number (0 = no limit)")
     if not isinstance(settings["replicates"], int) or settings["replicates"] < 1:
         problems.append("run.yaml: replicates must be a whole number, 1 or more")
     if not isinstance(settings["time_limit_days"], (int, float)) or settings["time_limit_days"] <= 0:
@@ -88,6 +99,15 @@ def check_physics_set(name, physics, all_sets):
     for key, options in CHOICES.items():
         if key in physics and physics[key] not in options:
             problems.append(f"physics set '{name}': {key} must be {' or '.join(options)}, not '{physics[key]}'")
+    if geometry == "grafted":
+        density, chains = physics.get("grafting_density"), physics.get("chains")
+        # above ~1 chain/nm^2 the grafting points are closer than two residues are wide
+        if not isinstance(density, (int, float)) or not 0 <= density <= 1:
+            problems.append(f"physics set '{name}': grafting_density must be a number of chains per nm^2 "
+                            f"from 0 (single chain) to 1, not '{density}'")
+        if not isinstance(chains, int) or chains < 1 or math.isqrt(chains) ** 2 != chains:
+            problems.append(f"physics set '{name}': chains must be a square number (4, 9, 16, 25, ...), "
+                            f"not '{chains}'")
     return problems
 
 
@@ -124,7 +144,8 @@ def sequence_file(run_dir, settings):
 
 
 def read_sequences(run_dir, settings):
-    """({name: sequence}, [names skipped]) for the selected rows of the run's CSV."""
+    """({name: sequence}, [names skipped], [names too long]) for the selected rows of the
+    run's CSV. Too long: more residues than max_residues (if that is set and not 0)."""
     csv_path = sequence_file(run_dir, settings)
     with open(csv_path, newline="", encoding="utf-8-sig") as f:
         rows = list(csv.DictReader(f))
@@ -133,7 +154,8 @@ def read_sequences(run_dir, settings):
         if column not in rows[0]:
             sys.exit(f"{csv_path.name} has no column '{column}'. Its columns are: {list(rows[0])}")
 
-    sequences, skipped = {}, []
+    sequences, skipped, too_long = {}, [], []
+    max_residues = settings.get("max_residues") or 0
     for row in select_rows(rows, settings["rows"]):
         # names end up in file names, so keep them to safe characters
         name = re.sub(r"[^A-Za-z0-9._-]+", "_", row[name_col].strip())
@@ -143,8 +165,27 @@ def read_sequences(run_dir, settings):
         if not sequence or set(sequence) - AMINO_ACIDS:
             skipped.append(name)
             continue
+        if max_residues and len(sequence) > max_residues:
+            too_long.append(name)
+            continue
         sequences[name] = sequence
-    return sequences, skipped
+    return sequences, skipped, too_long
+
+
+def physics_sets(run_dir):
+    """Every physics set a run can use: those of physics.yaml, plus any the run folder
+    defines for itself in physics_sets.yaml (same format; they may extend the shared sets).
+    ./noodle calibrate writes one, so an experiment's sets don't crowd physics.yaml."""
+    all_sets = yaml.safe_load((ROOT / "physics.yaml").read_text())
+    own = run_dir / "physics_sets.yaml"
+    if own.exists():
+        local = yaml.safe_load(own.read_text()) or {}
+        clash = sorted(set(local) & set(all_sets))
+        if clash:
+            sys.exit(f"runs/{run_dir.name}/physics_sets.yaml redefines {', '.join(clash)}, already in "
+                     "physics.yaml: give its sets other names.")
+        all_sets.update(local)
+    return all_sets
 
 
 def resolve_physics(all_sets, name):
@@ -159,13 +200,14 @@ def resolve_physics(all_sets, name):
 def plan_tasks(run_dir, settings):
     """Everything the first launch would create, checked, but not written yet.
 
-    Returns (sequences, skipped, physics, tasks): the proteins, the names of the rows
-    that were skipped, the physics sets {name: settings}, and the task list."""
-    sequences, skipped = read_sequences(run_dir, settings)
+    Returns (sequences, skipped, too_long, physics, tasks): the proteins, the names of
+    the rows skipped for unknown letters and for being longer than max_residues, the
+    physics sets {name: settings}, and the task list."""
+    sequences, skipped, too_long = read_sequences(run_dir, settings)
     if not sequences:
         sys.exit("No usable sequences were selected.")
     physics_names = settings["physics"] if isinstance(settings["physics"], list) else [settings["physics"]]
-    all_sets = yaml.safe_load((ROOT / "physics.yaml").read_text())
+    all_sets = physics_sets(run_dir)
     physics = {name: resolve_physics(all_sets, name) for name in physics_names}
 
     problems = []
@@ -187,7 +229,7 @@ def plan_tasks(run_dir, settings):
                                   replicate=replicate,
                                   seed=random.randint(1, 65535),  # HOOMD seeds are 16-bit numbers
                                   length=len(sequence), sequence=sequence))
-    return sequences, skipped, physics, tasks
+    return sequences, skipped, too_long, physics, tasks
 
 
 def write_tasks(run_dir, physics, tasks):
@@ -211,6 +253,9 @@ def describe_physics(p):
                       f"attractive {p['wall_attraction']:g} ({p['wall_attraction_scale']})")
         charge = "neutral" if p["wall_charge_density"] == 0 else f"charge {p['wall_charge_density']:+g} e/nm^2"
         where = f"grafted by the {p['graft_terminus']}-terminus to a {attraction}, {charge} {p['wall_potential']} surface"
+        chains, width = brush_size(p)
+        if chains > 1:
+            where = f"brush: {chains} chains at {p['grafting_density']:g}/nm^2 (box {width:.1f} nm), " + where
     return f"{where}; {p['temperature_K']:g} K, {1000 * p['ionic_concentration_M']:g} mM salt"
 
 
@@ -231,7 +276,19 @@ def in_words(number):
     return str(number)
 
 
-def show_plan(run_dir, settings, sequences, skipped, physics, tasks, on_cluster):
+def task_cost(physics, n_residues):
+    """Rough run time of one task on one core, in seconds: residues x steps / core speed."""
+    chains, _ = brush_size(physics)
+    return chains * n_residues * sum(run_lengths(physics, n_residues)[:2]) / RESIDUE_STEPS_PER_SECOND
+
+
+def trajectory_bytes(physics, n_residues):
+    """Size of one task's trajectory: every residue of every chain, in every frame."""
+    chains, _ = brush_size(physics)
+    return int(physics["frames"]) * (BYTES_PER_RESIDUE * chains * n_residues + BYTES_PER_FRAME)
+
+
+def show_plan(run_dir, settings, sequences, skipped, too_long, physics, tasks, on_cluster):
     lengths = sorted(map(len, sequences.values()))
     print(f"New run: {run_dir.name}" + (f'   "{settings["description"]}"' if settings.get("description") else ""))
     print()
@@ -242,6 +299,8 @@ def show_plan(run_dir, settings, sequences, skipped, physics, tasks, on_cluster)
     if skipped:
         print(f"           skipped {len(skipped)} with letters other than the 20 standard amino acids: "
               + ", ".join(skipped[:5]) + (", ..." if len(skipped) > 5 else ""))
+    if too_long:
+        print(f"           skipped {len(too_long)} longer than max_residues ({settings['max_residues']} residues)")
 
     print("Physics")
     for name, p in physics.items():
@@ -263,12 +322,19 @@ def show_plan(run_dir, settings, sequences, skipped, physics, tasks, on_cluster)
                  f"{in_words(shortest)} (N={lengths[0]}) to {in_words(longest)} (N={lengths[-1]})")
         print(f"  {name:20s} {steps}, saving {p['frames']} frames")
 
-    # No time estimate here: a test on this computer (a laptop or the login node) says
-    # little about the cluster's nodes. ./noodle status estimates from the run's own speeds.
-    print("Time       estimated by ./noodle status once the first tasks have measured their speed")
+    # Only a rough cost: the speed of the cluster's cores is not known here. ./noodle
+    # status gives real estimates, from the speeds the run's own tasks measure.
+    costs = [task_cost(physics[t["physics"]], t["length"]) for t in tasks]
+    print(f"Cost       ~{sum(costs) / 3600:,.0f} core-hours, the longest task {about(max(costs))} "
+          f"(rough: {RESIDUE_STEPS_PER_SECOND / 1e6:g} million residue-steps per second per core)")
+    limit = settings["time_limit_days"] * 86400
+    if on_cluster and max(costs) > limit:
+        over = sum(c > limit for c in costs)
+        print(f"           [!] {over} task(s) need more than time_limit_days: each stops at the limit and "
+              f"continues at the next ./noodle launch ({math.ceil(max(costs) / limit)} launches for the "
+              "longest). Consider max_residues, or a longer time limit if your cluster allows it")
 
-    n_bytes = sum(int(physics[t["physics"]]["frames"]) * (BYTES_PER_RESIDUE * t["length"] + BYTES_PER_FRAME)
-                  for t in tasks)
+    n_bytes = sum(trajectory_bytes(physics[t["physics"]], t["length"]) for t in tasks)
     print(f"Disk       ~{file_size(n_bytes)} of trajectories")
 
     if on_cluster:
@@ -411,8 +477,8 @@ def main():
     on_cluster = shutil.which("sbatch") is not None
 
     if not (run_dir / "tasks.csv").exists():
-        sequences, skipped, physics, tasks = plan_tasks(run_dir, settings)
-        show_plan(run_dir, settings, sequences, skipped, physics, tasks, on_cluster)
+        sequences, skipped, too_long, physics, tasks = plan_tasks(run_dir, settings)
+        show_plan(run_dir, settings, sequences, skipped, too_long, physics, tasks, on_cluster)
         if not confirm(f"Launch these {len(tasks)} tasks?"):
             print("Nothing was launched.")
             return

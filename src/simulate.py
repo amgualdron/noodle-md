@@ -1,4 +1,4 @@
-"""Run one task of a run: build the chain, equilibrate it, then record a trajectory.
+"""Run one task of a run: build the chain (or brush), equilibrate it, then record a trajectory.
 
     env/bin/python src/simulate.py runs/<run name> <task id>
 
@@ -36,7 +36,7 @@ import yaml
 
 from forcefield import (AA_PARAMS, AMINO_ACIDS, residue_pair_forces, thermal_energy,
                         wall_contact_distance, wall_forces)
-from runs import read_log, read_tasks, run_lengths, update_log
+from runs import brush_size, read_log, read_tasks, run_lengths, update_log
 
 REPORT_EVERY_HOURS = 1     # how often to print progress, update the log and save a checkpoint
 FIRST_REPORT_SECONDS = 60  # one early report, so you can see the speed right away
@@ -45,15 +45,19 @@ CHUNK_STEPS = 10_000       # steps between checks of the clock (cheap; not a phy
 
 # ── Geometry and starting configuration ───────────────────────────────────────
 def system_geometry(sequence, physics):
-    """The simulation box and, for a grafted chain, where the surface, ceiling and anchor are.
+    """The simulation box and, for grafted chains, where the surface, ceiling and anchors are.
 
     bulk:    one chain in a large periodic cube.
     grafted: the surface sits near the bottom of the box. A purely repulsive ceiling
-             sits above it, higher than the fully stretched chain can reach (contour
+             sits above it, higher than a fully stretched chain can reach (contour
              length plus wall_headroom), so beads can never wrap through the periodic
              boundary in z. Above the ceiling there is one interaction cutoff of empty
              space, so beads near the ceiling never interact with beads near the surface
              through that boundary either.
+             One chain is grafted at the centre of the surface; a brush (grafting_density
+             > 0) has its chains grafted at the centres of a square lattice of cells,
+             `spacing` apart (runs.brush_size gives their number and the box width).
+    Chain k holds particles k*N ... k*N + N-1, in sequence order.
     """
     if physics["geometry"] == "bulk":
         return dict(box=[physics["box_size"]] * 3)
@@ -62,54 +66,69 @@ def system_geometry(sequence, physics):
 
     if physics["graft_terminus"] not in ("N", "C"):
         raise ValueError("graft_terminus must be N or C")
-    contour = (len(sequence) - 1) * physics["harmonic_r0"]
+    n = len(sequence)
+    chains, width = brush_size(physics)
+    side = round(chains ** 0.5)
+    contour = (n - 1) * physics["harmonic_r0"]
     cutoff = max(physics["lj_r_cut"], physics["yukawa_r_cut"], physics["wall_r_cut"])
     height = contour + physics["wall_headroom"]  # surface to ceiling
     box_z = height + cutoff + 1.0
     z_wall = -box_z / 2 + 0.5
-    return dict(box=[physics["box_size"], physics["box_size"], box_z],
-                z_wall=z_wall, z_ceiling=z_wall + height,
-                # the grafted residue: the first one (N-terminus) or the last one (C-terminus)
-                anchor=0 if physics["graft_terminus"] == "N" else len(sequence) - 1)
+    # the grafted residue of each chain: its first one (N-terminus) or its last one (C-terminus)
+    end = 0 if physics["graft_terminus"] == "N" else n - 1
+    return dict(box=[width, width, box_z], z_wall=z_wall, z_ceiling=z_wall + height,
+                chains=chains, spacing=width / side, anchors=[k * n + end for k in range(chains)])
 
 
 def grafted_start_positions(sequence, physics, geometry, rng):
-    """A random, non-overlapping chain growing upward from the anchor.
+    """Random, non-overlapping chains growing upward from their anchors.
 
-    The anchor sits at its contact distance from the surface, where the wall exerts no
+    Each anchor sits at its contact distance from the surface, where the wall exerts no
     force on it. Each following bead is one bond length away in a random upward
-    direction, retried until it is at least 0.5 nm from every earlier bead.
+    direction, retried until it is at least 0.5 nm from every earlier bead of its chain.
+    In a brush, each chain grows inside its own column of the lattice, kept 0.25 nm away
+    from the column's sides, so beads of different chains also start at least 0.5 nm
+    apart: the start needs no extra step to remove overlaps, at any density.
     """
-    r0 = physics["harmonic_r0"]
-    anchor_sigma = AA_PARAMS[sequence[geometry["anchor"]]]["sigma"]
+    n, r0 = len(sequence), physics["harmonic_r0"]
+    anchor_index = geometry["anchors"][0]  # 0 or n - 1: the same residue in every chain
+    anchor_sigma = AA_PARAMS[sequence[anchor_index]]["sigma"]
     z_anchor = geometry["z_wall"] + wall_contact_distance(anchor_sigma, physics)
+    side, spacing = round(geometry["chains"] ** 0.5), geometry["spacing"]
+    half_width = spacing / 2 - 0.25 if geometry["chains"] > 1 else np.inf  # the column's reach
 
-    grown = [np.array([0.0, 0.0, z_anchor])]
-    while len(grown) < len(sequence):
-        for _ in range(10_000):
-            direction = rng.normal(size=3)
-            direction /= np.linalg.norm(direction)
-            direction[2] = abs(direction[2])
-            candidate = grown[-1] + r0 * direction
-            earlier = np.array(grown[:-1]).reshape(-1, 3)
-            if np.all(np.linalg.norm(earlier - candidate, axis=1) >= 0.5):
-                break
-        else:
-            raise RuntimeError("could not grow a non-overlapping starting chain")
-        grown.append(candidate)
-
-    positions = np.array(grown)
-    # beads were grown from the anchor outward; for C-terminal grafting that is backwards
-    return positions if geometry["anchor"] == 0 else positions[::-1]
+    chains = []
+    for k in range(geometry["chains"]):
+        # lattice cell centres, row by row, in a box centred on 0
+        centre = np.array([(k % side + 0.5) * spacing, (k // side + 0.5) * spacing]) - spacing * side / 2
+        grown = np.zeros((n, 3))
+        grown[0] = [*centre, z_anchor]
+        for i in range(1, n):
+            for _ in range(10_000):
+                direction = rng.normal(size=3)
+                direction /= np.linalg.norm(direction)
+                direction[2] = abs(direction[2])
+                candidate = grown[i - 1] + r0 * direction
+                if (np.all(np.abs(candidate[:2] - centre) <= half_width)
+                        and np.all(np.linalg.norm(grown[:i - 1] - candidate, axis=1) >= 0.5)):
+                    break
+            else:
+                raise RuntimeError("could not grow a non-overlapping starting chain")
+            grown[i] = candidate
+        # beads were grown from the anchor outward; for C-terminal grafting that is backwards
+        chains.append(grown if anchor_index == 0 else grown[::-1])
+    return np.concatenate(chains)
 
 
 def starting_snapshot(sequence, physics, geometry, seed):
-    """The starting configuration: one bead per residue, bonded in a chain.
+    """The starting configuration: one bead per residue, bonded in a chain (or several
+    identical chains, for a brush).
 
     A HOOMD snapshot is a plain description of the system: the box, and per particle
     its type, mass, charge and position, plus the list of bonds.
     """
     n = len(sequence)
+    chains = geometry.get("chains", 1)
     if physics["geometry"] == "bulk":
         # started as a straight line along x; equilibration makes it a random coil
         r0 = physics["harmonic_r0"]
@@ -119,17 +138,17 @@ def starting_snapshot(sequence, physics, geometry, seed):
 
     snapshot = hoomd.Snapshot()
     snapshot.configuration.box = geometry["box"] + [0, 0, 0]  # Lx, Ly, Lz, no tilt
-    snapshot.particles.N = n
+    snapshot.particles.N = n * chains
     snapshot.particles.types = AMINO_ACIDS
-    snapshot.particles.typeid[:] = [AMINO_ACIDS.index(aa) for aa in sequence]
-    snapshot.particles.mass[:] = [AA_PARAMS[aa]["mass"] for aa in sequence]
-    snapshot.particles.charge[:] = [AA_PARAMS[aa]["charge"] for aa in sequence]
-    snapshot.particles.diameter[:] = [AA_PARAMS[aa]["sigma"] for aa in sequence]  # for viewers only
+    snapshot.particles.typeid[:] = [AMINO_ACIDS.index(aa) for aa in sequence] * chains
+    snapshot.particles.mass[:] = [AA_PARAMS[aa]["mass"] for aa in sequence] * chains
+    snapshot.particles.charge[:] = [AA_PARAMS[aa]["charge"] for aa in sequence] * chains
+    snapshot.particles.diameter[:] = [AA_PARAMS[aa]["sigma"] for aa in sequence] * chains  # for viewers only
     snapshot.particles.position[:] = positions
-    snapshot.bonds.N = n - 1
+    snapshot.bonds.N = (n - 1) * chains
     snapshot.bonds.types = ["AA-bond"]
     snapshot.bonds.typeid[:] = 0
-    snapshot.bonds.group[:] = [[i, i + 1] for i in range(n - 1)]
+    snapshot.bonds.group[:] = [[k * n + i, k * n + i + 1] for k in range(chains) for i in range(n - 1)]
     return snapshot
 
 
@@ -144,15 +163,19 @@ def create_simulation(seed):
 
 def add_forces(sim, physics, geometry):
     """Give a simulation (whose particles already exist) its forces and its integrator."""
-    # Tree neighbour list: efficient for one chain in a big, mostly empty box. The
-    # buffer makes it rebuild only when some bead has moved more than 0.1 nm.
-    nlist = hoomd.md.nlist.Tree(buffer=0.2, exclusions=["bond"])
+    # Neighbour list: a tree is efficient for one chain in a big, mostly empty box; a cell
+    # list for a brush, whose box is filled (~1.3x faster there, measured). The buffer
+    # makes it rebuild only when some bead has moved more than 0.1 nm.
+    if geometry.get("chains", 1) > 1:
+        nlist = hoomd.md.nlist.Cell(buffer=0.2, exclusions=["bond"])
+    else:
+        nlist = hoomd.md.nlist.Tree(buffer=0.2, exclusions=["bond"])
     forces = residue_pair_forces(physics, nlist)
     moving = hoomd.filter.All()
     if physics["geometry"] == "grafted":
         forces += wall_forces(physics, geometry["z_wall"], geometry["z_ceiling"])
-        # The anchor is left out of the integrator: it feels forces but never moves.
-        moving = hoomd.filter.SetDifference(hoomd.filter.All(), hoomd.filter.Tags([geometry["anchor"]]))
+        # The anchors are left out of the integrator: they feel forces but never move.
+        moving = hoomd.filter.SetDifference(hoomd.filter.All(), hoomd.filter.Tags(geometry["anchors"]))
     # Langevin thermostat: friction plus random kicks that keep the temperature.
     # Friction gamma = 1 for every residue (HOOMD's default), i.e. a velocity
     # relaxation time m/gamma of ~100 time units (~50 ps) for a typical residue.
@@ -235,15 +258,18 @@ def main():
     writer = hoomd.write.GSD(filename=str(trajectory), mode="ab",
                              trigger=hoomd.trigger.Periodic(save_every, phase=equilibration % save_every))
 
+    chains = geometry.get("chains", 1)
     update_log(
         run_dir, task_id, status="running", sequence_name=name, n_residues=len(sequence),
-        physics=task["physics"], geometry=geometry, seed=seed,
+        chains=chains, physics=task["physics"], geometry=geometry, seed=seed,
         equilibration_steps=equilibration, production_steps=production, total_steps=total,
         step=sim.timestep, trajectory=str(trajectory.relative_to(run_dir)),
         started_at=log.get("started_at", now()), attempts=log.get("attempts", 0) + 1,
         host=socket.gethostname(), hoomd_version=hoomd.version.version, last_update=now(),
     )
-    print(f"Task {task_id}: {name}, {len(sequence)} residues, physics '{task['physics']}' "
+    brush = (f" x {chains} chains (brush, {physics['grafting_density']:g} chains/nm^2, "
+             f"box {geometry['box'][0]:.1f} nm wide)" if chains > 1 else "")
+    print(f"Task {task_id}: {name}, {len(sequence)} residues{brush}, physics '{task['physics']}' "
           f"({physics['geometry']}), seed {seed}")
     print(f"  {equilibration:,} equilibration + {production:,} production steps, "
           f"a frame every {save_every:,} steps -> {trajectory}", flush=True)

@@ -1,0 +1,61 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Brush calibration experiment: how long do 10 x 10 brushes take to equilibrate and
+# to relax, and how fast does the cluster simulate them? (README section 3)
+#
+#   ./noodle calibrate setup     makes runs/<run_name>/ from this file (sequences, physics sets)
+#   ./noodle launch <run_name>   runs it on the cluster (shows the cost and asks first);
+#                                again later to resume tasks that hit the time limit
+#   ./noodle status <run_name>   how it's going
+#   ./noodle calibrate report    analyses every finished task, deletes its trajectory, and
+#                                (re)writes the report in results_dir. Run it as often as
+#                                you like: early reports already cover the short chains,
+#                                and every run frees the disk space of finished tasks
+#   ./noodle calibrate cleanup   only if you give up on unfinished tasks: deletes the .gsd
+#                                files they left behind
+#
+# Each task is one brush of one sequence under one condition, recorded from step 0
+# (no separate equilibration), so the report sees the brush relax from its starting
+# configuration and then fluctuate around equilibrium.
+# Edit this file BEFORE setup; setup copies it into the run folder, and the report
+# reads that copy.
+# ─────────────────────────────────────────────────────────────────────────────
+
+run_name: brush_calibration
+description: "Brush calibration: equilibration, relaxation times and speed of 10 x 10 brushes"
+results_dir: experiments/results/brush_calibration   # inside noodle-md, so it can be committed
+
+# ── Sequences ─────────────────────────────────────────────────────────────────
+# For every length, one sequence of each kind, picked from sequences_csv among those
+# within 3% of the length ("confident" tier first, then closest length):
+#   typical      closest to the median hydropathy, fraction of charged residues and net charge
+#   hydrophobic  hydropathy at the 90th percentile (sticky chains: slowest to relax)
+#   basic        net positive charge at the 90th percentile (pulled toward a negative surface)
+sequences_csv: human_idrs_12k.csv
+lengths: [25, 50, 100, 150]
+kinds: [typical, hydrophobic, basic]
+
+# ── Conditions: one physics set each, every sequence runs under every one ─────
+# run_multiplier: the whole run is run_multiplier x N^2.2 time units (like the
+# multipliers of physics.yaml). Long enough for ~50+ relaxation times even if earlier
+# measurements on 4 x 4 brushes (~0.01-0.04 x N^2.2 up to 0.1 chains/nm^2, ~0.15 at 0.3)
+# are off by 2x, plus the equilibration.
+base_set: brush          # the physics set these extend (its other settings are kept)
+chains: 100              # 10 x 10
+conditions:
+  - {grafting_density: 0.01, wall_charge_density: 0.0,  run_multiplier: 4}
+  - {grafting_density: 0.03, wall_charge_density: 0.0,  run_multiplier: 4}
+  - {grafting_density: 0.1,  wall_charge_density: 0.0,  run_multiplier: 6}
+  - {grafting_density: 0.3,  wall_charge_density: 0.0,  run_multiplier: 8}
+  - {grafting_density: 0.03, wall_charge_density: -0.1, run_multiplier: 4}
+  - {grafting_density: 0.1,  wall_charge_density: -0.1, run_multiplier: 6}
+frames: 2500             # saved over the whole run (2-30 frames per relaxation time)
+replicates: 1
+
+# ── What the report recommends ────────────────────────────────────────────────
+equilibration_safety: 2          # recommended equilibration = this x the longest measured
+target_independent_samples: 50   # per chain, for the recommended production length
+
+# ── Cluster (the same meaning as in run.yaml) ─────────────────────────────────
+time_limit_days: 3
+max_running: 0
+extra_sbatch: []

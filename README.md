@@ -1,10 +1,11 @@
 # noodle-md
 
 Simulations of intrinsically disordered proteins (IDPs). Each amino acid is one bead,
-and the beads form a chain (the HPS model). A chain is simulated in one of three ways:
-**free in solution** (`baseline`), **attached by one end to a neutral surface**
-(`grafted`), or **attached to a charged surface** (`grafted_charged`). Runs can hold
-thousands of proteins on the cluster, or a few on your own computer.
+and the beads form a chain (the HPS model). A protein is simulated **free in solution**
+(`baseline`), **attached by one end to a neutral surface** (`grafted`) or **to a charged
+surface** (`grafted_charged`), or as a **brush**: many copies of it grafted side by side
+at a chosen grafting density (`brush`, `brush_charged`). Runs can hold thousands of
+proteins on the cluster, or a few on your own computer.
 
 You use it with one command and one settings file. No programming needed.
 
@@ -121,7 +122,8 @@ nano runs/grafted_charged_top500/run.yaml     # arrows to move, Ctrl-O Enter to 
 | `sequences_csv` | a set from `sequences/`, or your CSV in the run folder | `human_idrs_12k.csv` |
 | `name_column`, `sequence_column` | the CSV columns with the names and the sequences; already right for the shared sets | `id`, `sequence` |
 | `rows` | `all`, one row (`7`) or a range (`101-200`); row 1 is the first protein | `1-500` |
-| `physics` | one physics set from `physics.yaml`, or a list of several (section 3) | `grafted_charged` or `[grafted, grafted_charged]` |
+| `max_residues` | skip proteins longer than this (`0` = no limit); keeps brush runs affordable (section 3) | `200` |
+| `physics` | one physics set from `physics.yaml`, or a list of several (section 3) | `grafted_charged` or `[baseline, brush]` |
 | `replicates` | independent copies (different random seeds) of each protein | `3` |
 | `time_limit_days` | cluster time limit per task; a task that hits it can be resumed (step 5) | `3` |
 | `max_running` | most tasks running at once (0 = no limit) | `0` |
@@ -149,18 +151,22 @@ Physics
                        surface potential -0.71 kT/e
 Tasks      500 proteins x 2 physics set(s) x 3 replicate(s) = 3000 tasks
 Length     steps per task (equilibration + production), for the shortest and longest protein
-  grafted              1.75 million (N=20) to 3.06 billion (N=596), saving 3000 frames
-  grafted_charged      1.75 million (N=20) to 3.06 billion (N=596), saving 3000 frames
-Time       estimated by ./noodle status once the first tasks have measured their speed
+  grafted              874 thousand (N=20) to 1.53 billion (N=596), saving 3000 frames
+  grafted_charged      874 thousand (N=20) to 1.53 billion (N=596), saving 3000 frames
+Cost       ~34,607 core-hours, the longest task ~10d 13h (rough: 1 million residue-steps per second per core)
+           [!] 186 task(s) need more than time_limit_days: each stops at the limit and continues at the
+           next ./noodle launch (4 launches for the longest). Consider max_residues, or a longer time limit
 Disk       ~11.8 GB of trajectories
 Cluster    3000 SLURM jobs, time limit 3 day(s) each, no limit on how many at a time
 
 Launch these 3000 tasks? [y/N]
 ```
 
-There is no time estimate yet: a test on your laptop or the login node says little about
-the cluster's nodes, so `./noodle status` estimates it from the run itself. Answer `y` to launch;
-anything else changes nothing. Then:
+The cost is rough: it assumes one core does a million residue-steps per second (what a
+recent laptop core does with this model; a cluster core may differ by a factor ~2 either
+way). It is there to catch a plan that would take years before you launch it. Once tasks
+run, `./noodle status` estimates the time left from their real, measured speeds. Answer
+`y` to launch; anything else changes nothing. Then:
 
 - **Cluster:** every task is submitted to SLURM as its own job, and the command checks
   that they arrived in the queue. You can log out.
@@ -172,9 +178,9 @@ a copy of the physics settings are saved in the run folder. After that only
 `time_limit_days`, `max_running` and `extra_sbatch` can still be changed; for anything
 else, make a new run. Changing a file in `sequences/` never affects a launched run.
 
-> **Try it first.** For a 1-minute test of all three geometries: `./noodle new test`,
+> **Try it first.** For a 1-minute test of every geometry: `./noodle new test`,
 > then in `run.yaml` keep `sequences_csv: human_idrs_12k.csv` and set `rows: 1-2`,
-> `physics: [test_bulk, test_grafted, test_grafted_charged]`.
+> `physics: [test_bulk, test_grafted, test_grafted_charged, test_brush]`.
 
 ### Step 5: check on it, and resume what stopped
 
@@ -263,7 +269,8 @@ Everything is per protein and physics set, with the replicates pooled. It writes
 | file | what |
 |---|---|
 | `summary.csv` | **the result**: one row per protein and physics set, averages with error bars |
-| `timeseries/<physics set>/<protein>.csv.gz` | every saved frame of all its replicates (~60 KB per replicate) |
+| `timeseries/<physics set>/<protein>.csv.gz` | every saved frame of all its replicates (~60 KB per replicate; a brush has one row per chain per frame, a few MB per replicate) |
+| `profiles/<physics set>/<protein>.csv.gz` | brushes only: residue and charge density vs height above the surface |
 
 You can run it while the run is still going. Each replicate is analysed once, when it
 has finished, and added to its protein's timeseries; rerunning skips what is already
@@ -277,6 +284,7 @@ a correlation time, a different average) needs only them, not the trajectories:
 |---|---|
 | `replicate` | which replicate (independent simulation) the frame comes from |
 | `frame` | the saved frame within that replicate, 0, 1, 2, ... (evenly spaced over production) |
+| `chain` | brushes only: which chain of the brush, 0, 1, 2, ... |
 | `rg` | radius of gyration (chain size), mass-weighted |
 | `ree_x`, `ree_y`, `ree_z` | end-to-end vector, from the first residue to the last. For grafted chains z points away from the surface (so `ree_z` is negative when the C-terminus is grafted) |
 | `asphericity` | shape: 0 = ball, 1 = rod |
@@ -285,10 +293,24 @@ a correlation time, a different average) needs only them, not the trajectories:
 `summary.csv` gives, besides `n_residues`, `replicates` and `frames` (pooled), for each
 of `rg`, `rg_sq` (Rg²), `ree_sq` (end-to-end distance²), `asphericity`, `ree_z` and
 `com_height` (the last two for grafted chains only) the average over all pooled frames
-and its error bar `<name>_err` (one standard error). The error bar comes from the
-scatter between the replicates' own averages: replicates are independent, so this is
-the honest one. With a single replicate it is a block error instead (its frames cut
-into 10 consecutive blocks, from the scatter of the block averages).
+(and all chains of a brush) and its error bar `<name>_err` (one standard error). The
+error bar comes from the scatter between the replicates' own averages: replicates are
+independent, so this is the honest one. With a single replicate it is a block error
+instead (its frames, averaged over the chains, cut into 10 consecutive blocks, from the
+scatter of the block averages).
+
+Also in `summary.csv`:
+
+| column | meaning |
+|---|---|
+| `chains`, `grafting_density` | 1 and 0 for a single chain; for a brush its chains and chains/nm² |
+| `reduced_density` | brushes: grafting density × π ⟨Rg²⟩, with the ⟨Rg²⟩ of the same protein as a single chain in this run (a `bulk` set, else a single grafted chain; empty if the run has neither). Below ~1 the chains barely touch ("mushrooms"); well above 1 it is a true brush |
+| `independent_samples` | how many independent Rg values each chain gave per replicate: its frames divided by twice the correlation time of its Rg. **Below 20 the run was too short to trust** (`./noodle analyze` warns); 100s is comfortable |
+
+For a brush, twice the average `com_height` is the usual "brush height" (the first
+moment of the density profile), and `profiles/` has the whole profile: `z` (nm above the
+surface, bins of 0.25 nm), `density` (residues per nm³) and `charge` (e per nm³),
+averaged over each replicate's frames.
 
 The trajectories (`runs/<name>/trajectories/*.gsd`) open in [OVITO](https://www.ovito.org)
 or in Python with the `gsd` package.
@@ -331,7 +353,7 @@ To compute something new from the trajectories later, copy them back from the NA
 
 ---
 
-## 3. Bulk, grafted, charged wall, and batches
+## 3. Bulk, grafted, charged wall, brushes, and batches
 
 The geometry is just the physics set you name in `run.yaml`:
 
@@ -340,8 +362,117 @@ physics: baseline                              # free chains
 physics: grafted                               # grafted by the N-terminus to a neutral surface
 physics: grafted_reversed                      # grafted by the C-terminus to a neutral surface
 physics: grafted_charged                       # grafted to a surface with -0.1 e/nm^2
+physics: brush                                 # a 10 x 10 patch of chains grafted at 0.05 chains/nm^2
+physics: brush_charged                         # the same brush on a -0.1 e/nm^2 surface
 physics: [baseline, grafted, grafted_charged]  # all three, for every protein, in one run
 ```
+
+### Brushes
+
+A brush set grafts a **10 x 10 patch** of copies of the protein (`chains: 100`) on a square
+lattice, `grafting_density` chains per nm² apart, in a box that repeats sideways: each
+chain sees neighbours all around it, as in an infinite brush. The grafting density is the
+setting you choose; the box follows from it: it is sqrt(100 / grafting_density) wide
+(0.01 chains/nm²: 100 nm, 0.05: 44.7 nm, 0.3: 18.3 nm, 1: 10 nm), and as tall as for a
+single grafted chain (the fully stretched chain plus `wall_headroom`, then one interaction
+range of empty space). Every other setting (surface, charge, attraction, `graft_terminus`)
+works as for a single grafted chain. A box narrower than twice the interaction range (8 nm)
+would let a residue feel the same neighbour twice through the periodic boundary; a
+10 x 10 patch never gets there (grafting_density is at most 1), but a set with fewer
+`chains` does at high density, and then gets more chains automatically (the launch plan
+says so).
+
+**Which densities matter** depends on the protein's size: the chains start to touch
+around grafting density × π Rg² ≈ 1. For a 100-residue IDP (Rg ≈ 3 nm) that is ~0.03
+chains/nm², for a 50-residue one ~0.1. A scan from ~0.01 to ~0.3 chains/nm² covers the
+mushroom regime, the crossover and the brush. Put a single-chain set in the same run
+(`physics: [baseline, brush, ...]`), so `./noodle analyze` can give each brush its
+`reduced_density`. A density scan is a batch, like the charges below:
+
+```yaml
+# in physics.yaml
+brush_s001:
+  extends: brush
+  description: "Brush, 0.01 chains/nm^2"
+  grafting_density: 0.01
+
+brush_s02:
+  extends: brush
+  description: "Brush, 0.2 chains/nm^2"
+  grafting_density: 0.2
+```
+
+```yaml
+# in runs/<name>/run.yaml
+physics: [baseline, brush_s001, brush, brush_s02]
+max_residues: 200
+```
+
+**How long a brush must run is not settled yet.** The `brush` set's run length
+(`rouse_multiplier: 2`, `production_multiplier: 3`, `frames: 500`) is provisional: it comes
+from relaxation times measured earlier on 4 x 4 brushes. The brush calibration experiment
+below measures it for 10 x 10 brushes; until it has, check `independent_samples` in
+`./noodle analyze`, and expect dense brushes (~0.3 chains/nm²) to need a longer production.
+
+**What it costs.** A brush task has 100x the residues of a single chain, and run length
+grows with the chain's relaxation time (~N^2.2), so its cost grows like **N^3.2**. Every
+frame averages over 100 chains, which is why a brush gets by with a much shorter
+production than a single chain (`production_multiplier` 3 instead of 22). With the
+provisional run length, on one core (rough: 1 million residue-steps per second):
+
+| residues N | brush (10 x 10) | single chain | brush trajectory |
+|---|---|---|---|
+| 50 | 1.9 h | 5 min | 30 MB |
+| 100 | 17 h | 50 min | 60 MB |
+| 150 | 2.6 days | 3 h | 90 MB |
+| 200 | 6.7 days | 8 h | 120 MB |
+| 300 | 24 days | 1.2 days | 180 MB |
+| 400 | 61 days | 3 days | 240 MB |
+
+So **set `max_residues` for brush runs**. One density, one replicate, of the shared sets:
+
+| set, max_residues | proteins | core-hours | longest task |
+|---|---|---|---|
+| human_idrs_12k, 150 | 9,801 (82%) | ~66,000 | 2.6 days |
+| human_idrs_12k, 200 | 10,501 (88%) | ~139,000 | 6.7 days |
+| mobidb_idps_15k, 150 | 6,010 (40%) | ~99,000 | 2.6 days |
+| mobidb_idps_15k, 200 | 7,881 (53%) | ~299,000 | 6.7 days |
+
+With 7,500 cores, 66,000 core-hours is ~9 hours of the whole cluster. Tasks longer than
+`time_limit_days` simply continue at the next `./noodle launch` (the plan warns about
+them). These are estimates for one recent CPU core; `./noodle status` measures the real
+speed of your run, and the calibration experiment measures it for brushes.
+
+### Brush calibration experiment
+
+One experiment, packed into one config file and one command, measures what the brush
+settings above need: how long a 10 x 10 brush takes to **equilibrate** from its starting
+configuration, the chains' **relaxation time** in equilibrium (which sets the production
+length and `frames`), and how **fast** the cluster simulates brushes. By default it runs
+12 sequences (lengths 25, 50, 100, 150; a typical, a hydrophobic and a positively charged
+one of each) at 0.01, 0.03, 0.1 and 0.3 chains/nm² on a neutral surface and at 0.03 and
+0.1 on a -0.1 e/nm² surface: 72 tasks, ~1,600 core-hours, the longest ~4-5 days (so
+relaunch once or twice), up to ~18 GB of trajectories at once if you never run the report
+in between. Edit `experiments/brush_calibration.yaml` first to change any of that.
+
+```bash
+./noodle calibrate setup              # makes runs/brush_calibration/ from the config
+./noodle launch brush_calibration     # shows the cost, asks, submits (again later: resumes)
+./noodle status brush_calibration
+./noodle calibrate report             # any time, as often as you like (see below)
+```
+
+`./noodle calibrate report` analyses every finished task, **deletes its trajectory**
+(and checkpoint) once its numbers are saved, and rewrites
+`experiments/results/brush_calibration/report.md`: what was run and why, the methods,
+equilibration and relaxation times per density and length, measured speeds, the run
+lengths they call for, a cost table, and the next steps. Next to it are the per-task
+numbers (`tasks.csv`) and small per-task time series and autocorrelation functions, enough
+to redo the analysis without trajectories. Run it every day or so: early reports already
+cover the short chains, and each run frees disk space. When every task is in, commit the
+results folder (the report says how) so they can be used to set the brush defaults. If you
+give up on unfinished tasks, `./noodle calibrate cleanup` deletes the `.gsd` files they
+left behind.
 
 ### Charged wall
 
@@ -413,6 +544,8 @@ grafted_sticky_negative:
 Then write `physics: grafted_sticky_negative` in a run's `run.yaml`. Use a new name with
 no spaces, and indent with exactly two spaces. A run keeps its own frozen copy of the
 sets it uses, so editing `physics.yaml` never changes a run that has been launched.
+Sets only one run needs can instead go in `runs/<name>/physics_sets.yaml` (same format,
+and they may `extend` the sets of `physics.yaml`, but not reuse their names).
 
 **Any geometry**
 
@@ -422,10 +555,10 @@ sets it uses, so editing `physics.yaml` never changes a run that has been launch
 | `temperature_K` | temperature, K | `298` |
 | `ionic_concentration_M` | salt, mol/L (screens charges) | `0.150` |
 | `epsilon_lj` | strength of the attraction between residues, kcal/mol | `0.1` |
-| `lj_r_cut`, `yukawa_r_cut` | range of the residue attraction and of the electrostatics, nm | `3.5`, `3.5` |
+| `lj_r_cut`, `yukawa_r_cut` | range of the residue attraction and of the electrostatics, nm | `2.0`, `3.5` |
 | `harmonic_k`, `harmonic_r0` | bond stiffness (kcal/mol/nm²) and length (nm) | `1920`, `0.38` |
-| `box_size` | box size, nm (grafted: its width) | `500` |
-| `dt` | time step, in units of 0.489 ps | `0.01` |
+| `box_size` | box size, nm (a single grafted chain: its width) | `500` |
+| `dt` | time step, in units of 0.489 ps | `0.02` |
 | `rouse_multiplier`, `production_multiplier` | equilibration and production length, see below | `2`, `22` |
 | `equilibration_steps`, `production_steps` | a number here sets the length directly instead | empty |
 | `frames` | frames saved, evenly spaced over production | `3000` |
@@ -442,11 +575,24 @@ sets it uses, so editing `physics.yaml` never changes a run that has been launch
 | `wall_r_cut` | range of the surface attraction, nm | `3.5` |
 | `wall_charge_density` | surface charge, e/nm². Negative attracts K and R, repels D and E | `0.0` (`grafted_charged`: `-0.1`) |
 | `wall_headroom` | space between the fully stretched chain and the ceiling of the box, nm | `2.0` |
+| `grafting_density` | chains per nm². `0` = a single chain; above 0, a brush | `0` (`brush`: `0.05`) |
+| `chains` | a brush's number of chains, a square number (`100` = a 10 x 10 patch); more are added if the box would be too narrow | `100` |
 
 **Run length.** Steps = multiplier x N^2.2 / dt (N = number of residues), because a
 chain's relaxation time grows like N^2.2. The defaults are a rule of thumb from bulk
-chains; grafted chains may need others. The `test_bulk` / `test_grafted` /
-`test_grafted_charged` sets use tiny fixed lengths, for trying things out only.
+chains; the `independent_samples` column of `./noodle analyze` shows whether a run was
+long enough. (Measured relaxation times are ~0.01-0.04 x N^2.2 time units for single
+chains and brushes up to 0.1 chains/nm², so the single-chain default covers several
+hundred relaxation times. The brush default is provisional until the brush calibration
+experiment (section 3) has measured 10 x 10 brushes.) The
+`test_*` sets use tiny fixed lengths, for trying things out only.
+
+**Speed.** `lj_r_cut: 2.0` and `dt: 0.02` (~10 fs, the time step of the original HPS
+model) were chosen for speed: the LJ tail beyond 2 nm is worth less than 0.005 kT per
+residue, and dt 0.02 gives the same temperature and energies as 0.01. Together with
+skipping the electrostatics of uncharged pairs (exactly zero anyway), runs are ~3x
+(single chains) to ~4x (brushes) faster than with the earlier `lj_r_cut: 3.5`, `dt: 0.01`. Runs launched before keep
+their own frozen settings.
 
 ---
 
@@ -461,6 +607,7 @@ changed, rebuild: `rm -rf env`, then section 1 again.
 ```
 runs/<name>/
   run.yaml, <your>.csv   your settings (and your own sequences, if any)
+  physics_sets.yaml      optional: physics sets only this run uses (./noodle calibrate writes one)
   tasks.csv              one row per task: protein, sequence, physics set, replicate, seed
   physics.yaml           the physics sets used, frozen at the first launch
   logs/                  each task's progress (what ./noodle status reads)
@@ -478,11 +625,13 @@ represents forces)
 ```
 noodle                  the command: starts the matching program below
 src/forcefield.py       the model: residue table, electrostatics, every force
-src/simulate.py         one task: build the chain, equilibrate, record, checkpoint
+src/simulate.py         one task: build the chain or brush, equilibrate, record, checkpoint
 src/launch_run.py       run.yaml + CSV -> tasks; submits them to SLURM or runs them here
 src/new_run.py          ./noodle new        src/run_template.yaml   the run.yaml it copies
 src/status.py           ./noodle status     src/analyze_run.py      ./noodle analyze
 src/clean_run.py        ./noodle clean
+src/calibrate.py        ./noodle calibrate: the brush calibration experiment
+experiments/            its config; experiments/results/ its reports
 src/runs.py             shared helpers      src/slurm_job.sh        the SLURM job script
 src/check_physics.py    ./noodle check: the physics self-test (setup.sh runs it)
 src/environment.yml     the packages setup.sh installs into env/
@@ -517,7 +666,9 @@ src/environment.yml     the packages setup.sh installs into env/
   constant) and the salt concentration.
 - **Bonds:** harmonic springs. **Temperature:** Langevin thermostat.
 - **Grafted:** a smooth surface at the bottom of the box, with the anchor residue fixed
-  at its contact distance from it. The surface has a repulsive core, an optional
+  at its contact distance from it. A brush has one anchor per chain, on a square
+  lattice, in a box periodic in x and y; its chains start grown upward each in its own
+  lattice column, so they never overlap at the start. The surface has a repulsive core, an optional
   attraction scaled like hydropathy, and an optional charge, screened like the chain
   (linearised Poisson-Boltzmann, U(h) = 4π l_B kT q σ / κ · e^(−κh) for a residue of
   charge q at height h). A repulsive ceiling, out of the chain's reach, stops beads

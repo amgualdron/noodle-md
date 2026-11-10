@@ -5,8 +5,11 @@
 Prints PASS/FAIL per check and exits with an error if anything failed.
 """
 
+import contextlib
 import csv
+import io
 import json
+import math
 import subprocess
 import sys
 import tempfile
@@ -15,11 +18,14 @@ from pathlib import Path
 import gsd.hoomd
 import hoomd
 import numpy as np
+import pandas as pd
 import yaml
 
-from forcefield import AA_PARAMS, AMINO_ACIDS, debye_huckel, thermal_energy, wall_contact_distance, wall_forces
+from analyze_run import PROFILE_BIN, analyze
+from forcefield import (AA_PARAMS, AMINO_ACIDS, debye_huckel, residue_pair_forces, thermal_energy,
+                        wall_contact_distance, wall_forces)
 from launch_run import resolve_physics
-from runs import ROOT
+from runs import ROOT, brush_size
 
 ALL_SETS = yaml.safe_load((ROOT / "physics.yaml").read_text())
 failures = []
@@ -47,8 +53,72 @@ def wall_energy_and_force(physics, residue, height):
     return sum(f.energy for f in forces), sum(f.forces[0][2] for f in forces)
 
 
+def pair_energy(physics, a, b, r):
+    """Energy of residues a and b at distance r, from the forces of forcefield.py."""
+    sim = hoomd.Simulation(device=hoomd.device.CPU(), seed=1)
+    snap = hoomd.Snapshot()
+    snap.configuration.box = [20, 20, 20, 0, 0, 0]
+    snap.particles.N = 2
+    snap.particles.types = AMINO_ACIDS
+    snap.particles.typeid[:] = [AMINO_ACIDS.index(a), AMINO_ACIDS.index(b)]
+    snap.particles.charge[:] = [AA_PARAMS[a]["charge"], AA_PARAMS[b]["charge"]]
+    snap.particles.position[:] = [[0, 0, 0], [r, 0, 0]]
+    snap.bonds.types = ["AA-bond"]
+    sim.create_state_from_snapshot(snap)
+    forces = residue_pair_forces(physics, hoomd.md.nlist.Cell(buffer=0.2, exclusions=["bond"]))
+    sim.operations.integrator = hoomd.md.Integrator(dt=0.001, forces=forces)
+    sim.run(0)
+    return sum(f.energy for f in forces)
+
+
+def hps_formula(physics, a, b, r):
+    """The HPS pair energy written out (forcefield.residue_pair_forces gives the formulas)."""
+    eps = physics["epsilon_lj"]
+    sigma = (AA_PARAMS[a]["sigma"] + AA_PARAMS[b]["sigma"]) / 2
+    lam = (AA_PARAMS[a]["hydropathy"] + AA_PARAMS[b]["hydropathy"]) / 2
+    lj = 4 * eps * ((sigma / r) ** 12 - (sigma / r) ** 6)
+    if r < 2 ** (1 / 6) * sigma:
+        u = lj + (1 - lam) * eps
+    else:
+        u = lam * lj if r < physics["lj_r_cut"] else 0.0
+    bjerrum, kappa = debye_huckel(physics["temperature_K"], physics["ionic_concentration_M"])
+    qq = AA_PARAMS[a]["charge"] * AA_PARAMS[b]["charge"]
+    rc = physics["yukawa_r_cut"]
+    if r < rc:
+        u += qq * bjerrum * thermal_energy(physics["temperature_K"]) * (np.exp(-kappa * r) / r - np.exp(-kappa * rc) / rc)
+    return u
+
+
 def main():
     grafted = resolve_physics(ALL_SETS, "grafted")
+    baseline = resolve_physics(ALL_SETS, "baseline")
+
+    print("Residue pairs (HPS: Ashbaugh-Hatch + Debye-Huckel)")
+    worst = 0.0
+    for a, b in (("K", "E"), ("K", "K"), ("R", "D"), ("H", "E"), ("A", "L"), ("R", "R"), ("K", "A"), ("W", "Y")):
+        sigma = (AA_PARAMS[a]["sigma"] + AA_PARAMS[b]["sigma"]) / 2
+        for r in (0.9 * sigma, sigma, 1.2 * sigma, 1.5, 2.5, 3.4):
+            worst = max(worst, abs(pair_energy(baseline, a, b, r) - hps_formula(baseline, a, b, r)))
+    check(f"8 residue pairs at 6 distances match the formulas (largest difference {worst:.1e} kcal/mol)",
+          worst < 1e-9)
+    check("beyond lj_r_cut, a neutral pair does not interact; a charged pair still does",
+          pair_energy(baseline, "K", "A", 2.5) == 0 and pair_energy(baseline, "K", "E", 2.5) < 0)
+
+    print("Brush geometry")
+    brush = resolve_physics(ALL_SETS, "brush")
+    chains, width = brush_size(brush)
+    check(f"brush: {chains} chains in a box {width:.2f} nm wide: {brush['grafting_density']} chains/nm^2",
+          chains == brush["chains"] and abs(chains / width**2 - brush["grafting_density"]) < 1e-12)
+    densest = dict(brush, grafting_density=1.0)
+    chains, width = brush_size(densest)
+    check(f"densest allowed brush (1 chain/nm^2) keeps its {brush['chains']} chains: box {width:.2f} nm, at least "
+          f"twice the interaction range", chains == brush["chains"] and width >= 2 * (brush["yukawa_r_cut"] + 0.5))
+    small_dense = dict(brush, chains=16, grafting_density=0.5)
+    chains, width = brush_size(small_dense)
+    check(f"a 4 x 4 brush at 0.5 chains/nm^2 grows to {chains} chains, so its box ({width:.2f} nm) is at least "
+          f"twice the interaction range", chains > 16 and width >= 2 * (brush["yukawa_r_cut"] + 0.5)
+          and math.isqrt(chains) ** 2 == chains)
+    check("single grafted chain: 1 chain in a box box_size wide", brush_size(grafted) == (1, grafted["box_size"]))
 
     print("Electrostatics")
     bjerrum, kappa = debye_huckel(298, 0.150)
@@ -102,7 +172,7 @@ def main():
     check("negative surface attracts lysine and repels glutamate",
           wall_energy_and_force(physics, "K", 1.0)[1] < 0 < wall_energy_and_force(physics, "E", 1.0)[1])
 
-    print("Short simulations (bulk; grafted with attraction and charge; the grafted_charged set)")
+    print("Short simulations (bulk; grafted with attraction and charge; grafted_charged; brushes)")
     with tempfile.TemporaryDirectory() as tmp:
         run_dir = Path(tmp)
         (run_dir / "logs").mkdir()
@@ -112,6 +182,9 @@ def main():
                                 wall_attraction=0.3, wall_charge_density=-0.05)}
         sets["grafted_C_terminus"] = dict(sets["grafted"], graft_terminus="C")
         sets["grafted_charged"] = resolve_physics(ALL_SETS, "test_grafted_charged")
+        sets["brush"] = resolve_physics(ALL_SETS, "test_brush")
+        sets["brush_dense_C_terminus"] = dict(sets["brush"], grafting_density=0.4, graft_terminus="C",
+                                              wall_attraction=0.3, wall_charge_density=-0.05)
         (run_dir / "physics.yaml").write_text(yaml.safe_dump(sets))
         sequence = "MSEQKKPLGEGFDNRYSTWAVHIC"
         names = list(sets)
@@ -131,13 +204,27 @@ def main():
             with gsd.hoomd.open(run_dir / log["trajectory"]) as traj:
                 positions = np.array([frame.particles.position for frame in traj])
             check(f"{name}: {len(positions)} frames, all positions finite", np.isfinite(positions).all())
-            if name.startswith("grafted"):
+            if name.startswith(("grafted", "brush")):
                 geometry = log["geometry"]
-                anchor = positions[:, geometry["anchor"], :]
-                check(f"{name}: anchor (residue {geometry['anchor'] + 1}) never moved",
-                      np.all(anchor == anchor[0]))
+                anchors = positions[:, geometry["anchors"], :]
+                check(f"{name}: {geometry['chains']} chain(s) of {len(sequence)} residues, anchors never moved",
+                      positions.shape[1] == geometry["chains"] * len(sequence) and np.all(anchors == anchors[0]))
                 check(f"{name}: every bead stayed between surface and ceiling",
                       positions[:, :, 2].min() > geometry["z_wall"] and positions[:, :, 2].max() < geometry["z_ceiling"])
+
+        print("Analysis of those simulations")
+        with contextlib.redirect_stdout(io.StringIO()):
+            analyze(run_dir)
+        summary = {row["physics"]: row for _, row in
+                   pd.read_csv(run_dir / "analysis" / "summary.csv").iterrows()}
+        check("one summary row per simulation, Rg of every chain between 0.5 and 5 nm",
+              set(summary) == set(names) and all(0.5 < row["rg"] < 5 for row in summary.values()))
+        for name in ("brush", "brush_dense_C_terminus"):
+            chains, width = brush_size(sets[name])
+            profile = pd.read_csv(run_dir / "analysis" / "profiles" / name / "test.csv.gz")
+            residues = profile["density"].sum() * PROFILE_BIN * width**2
+            check(f"{name}: the density profile holds all {chains} x {len(sequence)} residues ({residues:.1f})",
+                  abs(residues / (chains * len(sequence)) - 1) < 1e-3)  # the files keep 5 digits
 
     print()
     if failures:
