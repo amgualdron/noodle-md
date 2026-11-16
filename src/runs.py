@@ -95,6 +95,8 @@ def update_registry(run_dir, **fields):
 
 def refresh_registry(run_dir, states=None):
     """Update the run's numbers in runs/runs.csv: tasks done, failed, analysed, core-hours..."""
+    if run_dir.parent != RUNS:  # not a run of this folder (./noodle check's temporary one)
+        return
     settings = yaml.safe_load((run_dir / "run.yaml").read_text()) or {}
     fields = dict(description=settings.get("description"), last_checked=datetime.now().isoformat(timespec="seconds"))
     if (run_dir / "tasks.csv").exists():
