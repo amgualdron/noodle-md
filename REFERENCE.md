@@ -219,7 +219,9 @@ digits (those mean run numbers).
    invalid choices, grafting density 0-1, square number of chains). Any problem stops
    the launch before anything is written.
 2. **Reads the sequences**: the CSV named by `sequences_csv`, from the run folder if it
-   is there, else from `sequences/`; the rows in `rows` (counted from 1). Names are
+   is there, else from `sequences/`; the rows in `rows`, counted from 1: `all`, a row
+   (`7`), a range (`101-200`), or a list of rows and ranges (`[1-50, 75]`), taken in file
+   order. Names are
    cleaned to safe characters and must be unique. Sequences with unknown letters, and
    those longer than `max_residues` (if not 0), are skipped and counted.
 3. **Builds the tasks**: every protein × physics set × replicate. Each protein and
@@ -233,22 +235,40 @@ digits (those mean run numbers).
    jobs. Then asks y/N.
 5. **Freezes the run**: writes `physics.yaml` (the sets fully written out), `tasks.csv`
    (with every sequence), and `manifest.csv` (one row per protein and physics set:
-   identity, conditions, sequence descriptors, section 6). From now on only
-   `time_limit_days`, `max_running` and `extra_sbatch` of `run.yaml` still matter.
+   identity, conditions, sequence descriptors, section 6). From now on only the cluster
+   settings of `run.yaml` (`max_jobs`, `time_limit_days`, `max_running`,
+   `extra_sbatch`) still matter; they apply from the next launch.
 6. **Groups the tasks into jobs** and starts them (4.3, 4.4).
 
 ### 4.3 Grouping tasks into jobs
 
-Each task's remaining run time is estimated: at speeds this run has measured (the
-task's own, else that of the measured task closest in length, in the same physics set
-if possible), or before any measurement at 1 million residue-steps per second. Then
-"first fit decreasing": from the longest task to the shortest, each goes into the first
-job with room for it, else into a new job. The room of a job is the **target**:
-4 hours (`JOB_TARGET_HOURS` in `src/launch_run.py`), but at most half of
-`time_limit_days`, since estimates can be off by 2x. A task longer than the target
-fills a job by itself (it may then need several time limits, 4.6). Jobs are numbered
-after the run's existing ones, longest first, and in each job the longest tasks come
-first. Each job gets its file `jobs/job_NNNN.csv`, with a row per task (status
+The grouping uses only what is known exactly before anything runs: each task's
+**work**, its residues × the steps it still has to compute (chains × N × steps, with
+steps ∝ N^2.2, section 3.6; for a resumed task, the steps left). Speed estimates play
+no part, so the same tasks always give the same jobs. Within one physics set, ordering by
+work is ordering by chain length.
+
+The run is split into at most `max_jobs` jobs (`run.yaml`, 1000 when not set; 0 = no
+limit):
+
+1. With no more tasks than `max_jobs`, every task gets its own job (a small batch runs
+   fully in parallel).
+2. Otherwise the tasks are sorted from the most work to the least (ties by task id) and
+   cut into consecutive groups. Each job is given a share: the work still left divided
+   by the jobs still available. It takes the next task, then keeps taking the next one
+   while that brings it closer to its share. A task with more work than the share is a
+   job of its own; the last job available takes whatever is left.
+
+So the longest proteins run alone, the shortest are pooled many to a job, and every job
+holds proteins of similar length and about the same total work. For the 12,000 proteins
+of `human_idrs_12k.csv` as single chains, 1000 jobs means: proteins of 331-599 residues
+one per job, down to 3942 proteins of 20-37 residues in the last job. The plan shows
+this, with a rough warning when a job of several tasks may exceed `time_limit_days` (at
+1 million residue-steps per second); it then stops at the limit and continues at the
+next launch, like a single long task (4.7). A task longer than the time limit always
+needs several launches (4.6). Jobs are numbered after the run's existing ones, from the one with the most work per
+task (the longest proteins) to the one with the least, and in each job the longest tasks
+come first. Each job gets its file `jobs/job_NNNN.csv`, with a row per task (status
 `submitted`), carrying over any earlier progress of the task (attempts, run time, steps).
 
 ### 4.4 Starting the jobs
@@ -753,6 +773,10 @@ in `src/simulate.py`, the checks in `src/launch_run.py`, `brush_size`/`condition
 - **κ above 1** for ~2% of sequences (section 6).
 - **Linearised surface electrostatics** overestimate the pull above ~1 kT/e surface
   potential; launch warns.
+- **`max_jobs` defaults to 1000**, which fits one job array on most clusters
+  (`MaxArraySize` is often 1001). With a large `max_jobs`, a job can hold very few
+  tasks of the shortest proteins and HOOMD's start-up (seconds) is paid more often; with
+  a small one, jobs of many short tasks may need more than one time limit.
 - **`max_running` applies per job array.** A run with more jobs than the cluster's
   `MaxArraySize` is sent as several arrays, each with its own limit.
 - **Run numbers are per copy of the repository.** Each user's clone numbers its own runs.

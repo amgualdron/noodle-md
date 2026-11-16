@@ -11,9 +11,11 @@ what will be (re)started, then start only the tasks that are neither completed n
 the queue. Tasks that were stopped resume from their last checkpoint.
 
 Tasks are grouped into jobs: a job runs on one core and works through its tasks one
-after another, so thousands of short tasks become a few hundred jobs of up to about
-JOB_TARGET_HOURS each, and a long task gets a job of its own. The longest jobs are
-numbered (and so started) first. On a cluster (when sbatch exists) the jobs are
+after another. A run is split into at most max_jobs jobs (run.yaml) of about equal work,
+grouped by chain length: the longest proteins get a job each, the shortest are pooled
+many to a job, and a run with fewer tasks than max_jobs gets one job per task. The
+grouping depends only on the tasks (their chain length and physics set), never on speed
+estimates. The jobs with the longest proteins are numbered (and so started) first. On a cluster (when sbatch exists) the jobs are
 submitted as a SLURM job array, one array element per job; on your own computer they
 run one after another, right here.
 """
@@ -33,19 +35,19 @@ from statistics import median
 import yaml
 
 from runs import (RESIDUE_STEPS_PER_SECOND, ROOT, SEQUENCES, about, brush_size, checkpoint_path, compress,
-                  conditions, file_size, job_numbers, measured_speeds, read_submissions, read_tasks,
-                  refresh_registry, run_from_command_line, run_lengths, seconds_left, slurm_queue, task_states,
+                  conditions, file_size, job_numbers, read_submissions, read_tasks,
+                  refresh_registry, run_from_command_line, run_lengths, slurm_queue, task_states,
                   update_registry, write_csv, write_job)
 
 # The 20 standard amino acids: the same letters as the residue table in forcefield.py
 # (repeated here so this script does not have to load HOOMD).
 AMINO_ACIDS = set("ARNDCQEGHILKMFPSTWYV")
 STOPPED_EXIT_CODE = 3  # simulate.py's exit code when a job stopped because it was asked to
-JOB_TARGET_HOURS = 4   # short tasks are packed into jobs of up to about this long (estimated)
+MAX_JOBS = 1000        # max_jobs when run.yaml doesn't set it (one SLURM job array on most clusters)
 
-RUN_SETTINGS = ["description", "sequences_csv", "name_column", "sequence_column", "rows",
+RUN_SETTINGS = ["description", "sequences_csv", "name_column", "sequence_column", "rows", "max_jobs",
                 "max_residues", "physics", "replicates", "time_limit_days", "max_running", "extra_sbatch"]
-OPTIONAL = ["description", "max_residues"]  # run.yaml files made before max_residues existed lack it
+OPTIONAL = ["description", "max_residues", "max_jobs"]  # older run.yaml files may lack the last two
 # The sets in physics.yaml that list every setting a bulk / grafted simulation needs
 REFERENCE_SETS = {"bulk": "baseline", "grafted": "grafted"}
 CHOICES = {"geometry": ["bulk", "grafted"], "graft_terminus": ["N", "C"],
@@ -83,6 +85,9 @@ def check_run_settings(settings):
         problems.append("run.yaml: replicates must be a whole number, 1 or more")
     if not isinstance(settings["time_limit_days"], (int, float)) or settings["time_limit_days"] <= 0:
         problems.append("run.yaml: time_limit_days must be a number of days, e.g. 3 or 0.5")
+    max_jobs = settings.get("max_jobs", MAX_JOBS)
+    if not isinstance(max_jobs, int) or isinstance(max_jobs, bool) or max_jobs < 0:
+        problems.append("run.yaml: max_jobs must be a whole number, e.g. 1000 (0 = one job per task)")
     if not isinstance(settings["extra_sbatch"], list):
         problems.append('run.yaml: extra_sbatch must be a list, e.g. [] or ["--partition=normal"]')
     stop_if(problems)
@@ -116,18 +121,28 @@ def check_physics_set(name, physics, all_sets):
 
 # ── Building the task list (first launch only) ────────────────────────────────
 def select_rows(rows, setting):
-    """rows: all | 7 | 101-200 (counted from 1)."""
-    text = str(setting).strip()
-    if text == "all":
-        return rows
-    match = re.fullmatch(r"(\d+)(?:\s*-\s*(\d+))?", text)
-    if not match:
-        sys.exit(f"rows: '{setting}' is not understood. Use all, a number like 7, or a range like 101-200.")
-    first = int(match.group(1))
-    last = int(match.group(2) or first)
-    if not 1 <= first <= last <= len(rows):
-        sys.exit(f"rows: {text} is outside the file, which has {len(rows)} rows.")
-    return rows[first - 1:last]
+    """The rows the `rows` setting picks, in file order (counted from 1):
+    all | 7 | 101-200 | a list of these, e.g. [1-50, 75, 200-210]."""
+    picked = set()
+    for item in setting if isinstance(setting, list) else [setting]:
+        text = str(item).strip()
+        if text == "all":
+            return rows
+        match = re.fullmatch(r"(\d+)(?:\s*-\s*(\d+))?", text)
+        if not match:
+            sys.exit(f"rows: '{item}' is not understood. Use all, a row like 7, a range like 101-200, "
+                     "or a list of rows and ranges like [1-50, 75, 200-210].")
+        first = int(match.group(1))
+        last = int(match.group(2) or first)
+        if not 1 <= first <= last <= len(rows):
+            sys.exit(f"rows: {text} is outside the file, which has {len(rows)} rows.")
+        picked.update(range(first, last + 1))
+    return [rows[i - 1] for i in sorted(picked)]
+
+
+def rows_text(setting):
+    """The rows setting as written in run.yaml: 1-50 or [1-50, 75]."""
+    return f"[{', '.join(map(str, setting))}]" if isinstance(setting, list) else str(setting)
 
 
 def sequence_file(run_dir, settings):
@@ -314,14 +329,14 @@ def trajectory_bytes(physics, n_residues):
     return int(physics["frames"]) * (BYTES_PER_RESIDUE * chains * n_residues + BYTES_PER_FRAME)
 
 
-def show_plan(run_dir, settings, sequences, skipped, too_long, physics, tasks, n_jobs, on_cluster):
+def show_plan(run_dir, settings, sequences, skipped, too_long, physics, tasks, groups, on_cluster):
     lengths = sorted(map(len, sequences.values()))
     print(f"New run: {run_dir.name}" + (f'   "{settings["description"]}"' if settings.get("description") else ""))
     print()
     sizes = (f"{lengths[0]} residues" if lengths[0] == lengths[-1] else
              f"{lengths[0]} to {lengths[-1]} residues (median {median(lengths):.0f})")
     csv_path = sequence_file(run_dir, settings).relative_to(ROOT)
-    print(f"Sequences  {csv_path}, rows {settings['rows']}: {len(sequences)} proteins, {sizes}")
+    print(f"Sequences  {csv_path}, rows {rows_text(settings['rows'])}: {len(sequences)} proteins, {sizes}")
     if skipped:
         print(f"           skipped {len(skipped)} with letters other than the 20 standard amino acids: "
               + ", ".join(skipped[:5]) + (", ..." if len(skipped) > 5 else ""))
@@ -366,13 +381,21 @@ def show_plan(run_dir, settings, sequences, skipped, too_long, physics, tasks, n
     if on_cluster:
         at_once = f"at most {settings['max_running']} at a time" if settings["max_running"] else "no limit on how many at a time"
         extra = f", extra sbatch options: {' '.join(settings['extra_sbatch'])}" if settings["extra_sbatch"] else ""
-        print(f"Cluster    {len(tasks)} tasks in {n_jobs} SLURM job(s) of up to ~{job_target_hours(settings):g} h "
-              f"(short tasks share a job), time limit {settings['time_limit_days']:g} day(s) each, {at_once}{extra}")
+        print(f"Cluster    {describe_jobs(groups, tasks, settings)}")
+        print(f"           time limit {settings['time_limit_days']:g} day(s) per job, {at_once}{extra}")
+        # (a single task longer than the time limit is counted above; here only shared jobs)
+        cost = {t["task_id"]: task_cost(physics[t["physics"]], t["length"]) for t in tasks}
+        over = [g for g in groups if len(g) > 1 and sum(cost[i] for i in g) > settings["time_limit_days"] * 86400]
+        if over:
+            print(f"           [!] {len(over)} job(s) of several tasks may need more than the time limit (rough "
+                  "estimate). They stop at the limit and continue at the next launch; a higher max_jobs "
+                  "splits the work finer")
     else:
         print("Where      no SLURM here: the tasks run in this terminal, one after another "
               "(Ctrl-C stops, ./noodle launch continues)")
     print()
-    print("Once launched, the run is frozen: only time_limit_days, max_running and extra_sbatch can still change.")
+    print("Once launched, the run is frozen: only the cluster settings (max_jobs, time_limit_days, max_running, "
+          "extra_sbatch) can still change.")
 
 
 def confirm(question):
@@ -385,36 +408,60 @@ def confirm(question):
 
 
 # ── Grouping tasks into jobs ──────────────────────────────────────────────────
-def job_target_hours(settings):
-    """A job's estimated length: JOB_TARGET_HOURS, but at most half the time limit (the
-    estimates can be off by a factor 2)."""
-    return min(JOB_TARGET_HOURS, settings["time_limit_days"] * 24 / 2)
+def task_work(task, state, physics):
+    """What a task still has to compute: residues x steps left. Known exactly from its chain
+    length and physics set (and, for a task that ran before, how far it got), so grouping by
+    it never depends on how fast a computer is."""
+    total = state.get("total_steps") or sum(run_lengths(physics, task["length"])[:2])
+    return brush_size(physics)[0] * task["length"] * (total - (state.get("step") or 0))
 
 
-def group_into_jobs(seconds, settings):
-    """[[task ids of job 1], [task ids of job 2], ...] from {task id: estimated seconds}.
+def group_into_jobs(work, max_jobs):
+    """[[task ids of job 1], [task ids of job 2], ...] from {task id: work}: at most max_jobs
+    jobs (0 = no limit) of about equal work.
 
-    "First fit decreasing": take the tasks from the longest to the shortest and put each
-    into the first job that still has room for it, else start a new job. A task longer
-    than the target fills a job on its own. The longest jobs come first, and in each job
-    the longest tasks come first."""
-    target = job_target_hours(settings) * 3600
-    smallest = min(seconds.values())
-    open_jobs, full_jobs = [], []  # each job: [estimated seconds, [task ids]]
-    for task_id in sorted(seconds, key=lambda i: -seconds[i]):
-        for job in open_jobs:
-            if job[0] + seconds[task_id] <= target:
-                break
-        else:
-            job = [0.0, []]
-            open_jobs.append(job)
-        job[0] += seconds[task_id]
-        job[1].append(task_id)
-        if target - job[0] < smallest:  # no task left can fit in it any more
-            open_jobs.remove(job)
-            full_jobs.append(job)
-    jobs = sorted(full_jobs + open_jobs, key=lambda job: -seconds[job[1][0]])
-    return [task_ids for _, task_ids in jobs]
+    The tasks are sorted from the most work to the least (for one physics set: from the
+    longest chain to the shortest) and cut into consecutive groups. Each job gets about the
+    work still left divided by the jobs still available; a task with more than that gets a
+    job of its own. So the longest proteins run alone, the shortest are pooled many to a
+    job, and every job holds proteins of similar length. With no more tasks than max_jobs,
+    every task gets its own job. The same tasks always give the same jobs."""
+    order = sorted(work, key=lambda i: (-work[i], i))
+    if not max_jobs or len(order) <= max_jobs:
+        return [[i] for i in order]
+    groups, left, start = [], sum(work.values()), 0
+    while start < len(order):
+        share = left / (max_jobs - len(groups))
+        group, total = [order[start]], work[order[start]]
+        # take the next task while that brings the job closer to its share
+        while start + len(group) < len(order) and total + work[order[start + len(group)]] / 2 <= share:
+            total += work[order[start + len(group)]]
+            group.append(order[start + len(group)])
+        if len(groups) == max_jobs - 1:  # the last job available takes whatever is left
+            group = order[start:]
+        groups.append(group)
+        left -= sum(work[i] for i in group)
+        start += len(group)
+    return groups
+
+
+def describe_jobs(groups, tasks, settings):
+    """E.g. '12000 tasks in 1000 SLURM jobs (max_jobs), grouped by chain length: from 1 task
+    per job (N = 380-599) to 41 (N = 20-22)'."""
+    length = {t["task_id"]: t["length"] for t in tasks}
+    n_tasks = sum(map(len, groups))
+    text = f"{n_tasks} task(s) in {len(groups)} SLURM job(s)"
+    if len(groups) == n_tasks:
+        return text + " (one task per job)"
+
+    def lengths(group):
+        low, high = min(length[i] for i in group), max(length[i] for i in group)
+        return f"N = {low}" if low == high else f"N = {low}-{high}"
+    alone = [g for g in groups if len(g) == 1]
+    first = (f"1 task per job ({lengths(sum(alone, []))})" if alone
+             else f"{len(groups[0])} per job ({lengths(groups[0])})")
+    return (text + f" (max_jobs: {settings.get('max_jobs', MAX_JOBS)}), grouped by chain length: from {first} "
+            f"to {len(groups[-1])} tasks per job ({lengths(groups[-1])})")
 
 
 def write_jobs(run_dir, groups, tasks, states):
@@ -558,14 +605,11 @@ def run_jobs_here(run_dir, jobs):
           + (f", {len(failed)} failed (tasks {compress(sorted(failed))})." if failed else "."))
 
 
-def estimated_seconds(run_dir, task_ids, tasks, physics):
-    """{task id: estimated run time still needed}, from the speeds this run has measured,
-    or the rough core speed before any (at least a second each)."""
+def work_left(run_dir, task_ids, tasks, physics):
+    """{task id: residues x steps it still has to compute}."""
     states = task_states(run_dir) if (run_dir / "jobs").exists() else {}
-    speeds = measured_speeds(tasks, states)
     by_id = {task["task_id"]: task for task in tasks}
-    return {i: max(1.0, seconds_left(by_id[i], states.get(i, {}), physics[by_id[i]["physics"]], speeds, rough=True))
-            for i in task_ids}
+    return {i: task_work(by_id[i], states.get(i, {}), physics[by_id[i]["physics"]]) for i in task_ids}
 
 
 def main():
@@ -577,8 +621,8 @@ def main():
     if not (run_dir / "tasks.csv").exists():
         sequences, skipped, too_long, row_numbers, physics, tasks = plan_tasks(run_dir, settings)
         to_start = [t["task_id"] for t in tasks]
-        groups = group_into_jobs(estimated_seconds(run_dir, to_start, tasks, physics), settings)
-        show_plan(run_dir, settings, sequences, skipped, too_long, physics, tasks, len(groups), on_cluster)
+        groups = group_into_jobs(work_left(run_dir, to_start, tasks, physics), settings.get("max_jobs", MAX_JOBS))
+        show_plan(run_dir, settings, sequences, skipped, too_long, physics, tasks, groups, on_cluster)
         if not confirm(f"Launch these {len(tasks)} tasks?"):
             print("Nothing was launched.")
             return
@@ -586,15 +630,16 @@ def main():
         update_registry(run_dir, launched=datetime.now().isoformat(timespec="seconds"))
     else:
         if (run_dir / "run.yaml").stat().st_mtime > (run_dir / "tasks.csv").stat().st_mtime:
-            print("Note: run.yaml was edited after this run was launched. Only time_limit_days, "
-                  "max_running and extra_sbatch changes take effect; for anything else make a new run.\n")
+            print("Note: run.yaml was edited after this run was launched. Only changes to the cluster settings "
+                  "(max_jobs, time_limit_days, max_running, extra_sbatch) take effect; for anything else make "
+                  "a new run.\n")
         to_start = plan_relaunch(run_dir, on_cluster)
         if not to_start:
             return
         tasks = read_tasks(run_dir)
         physics = yaml.safe_load((run_dir / "physics.yaml").read_text())
-        groups = group_into_jobs(estimated_seconds(run_dir, to_start, tasks, physics), settings)
-        print(f"Starting {len(to_start)} task(s) in {len(groups)} job(s) of up to ~{job_target_hours(settings):g} h.")
+        groups = group_into_jobs(work_left(run_dir, to_start, tasks, physics), settings.get("max_jobs", MAX_JOBS))
+        print(f"Starting {describe_jobs(groups, tasks, settings)}.")
 
     jobs = write_jobs(run_dir, groups, read_tasks(run_dir), task_states(run_dir))
     refresh_registry(run_dir)

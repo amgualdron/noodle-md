@@ -69,6 +69,8 @@ with a different run layout: finish them with the version that launched them
 
 ### Changed
 - Run names can't be only digits (those are run numbers now).
+- `rows` also takes a list of rows and ranges, `[1-50, 75, 200-210]`: in `run.yaml` a
+  list in brackets always means "several". A range is still written with a dash, `1-50`.
 - README rewritten short and plain, for users with no software background: setup,
   a first run in six steps, the commands, the physics sets, the main result columns,
   and fixes for common problems. `src/run_template.yaml` explains the per-job time limit.
@@ -89,12 +91,16 @@ with a different run layout: finish them with the version that launched them
   `analysis/profiles/` are gone: the per-task results in `jobs/` replace them, and keep
   working after `./noodle clean` deletes the trajectories.
 - **Tasks are grouped into jobs.** A job is one SLURM array element (one core) that runs
-  its tasks one after another. `./noodle launch` packs short tasks into jobs of up to
-  ~4 h (estimated; at most half of `time_limit_days`), longest first ("first fit
-  decreasing"); a longer task gets a job of its own. The longest jobs get the lowest
+  its tasks one after another. A run is split into at most `max_jobs` jobs (new
+  `run.yaml` setting, default 1000, the value when missing; 0 = one job per task) by
+  chain length: tasks are sorted by their work (chains x N x steps, known exactly before
+  running, no speed estimates), and cut into consecutive groups of about equal work. The
+  longest proteins get a job each, the shortest share one, and a run with no more tasks
+  than `max_jobs` gets one job per task, so small batches run fully in parallel. The
+  same tasks always give the same jobs. The jobs with the longest proteins get the lowest
   numbers, so they start first. A failed task doesn't stop its job. Thousands of
-  minute-long tasks now make a few hundred jobs instead of thousands, and HOOMD is loaded
-  once per job. `max_running` now counts jobs (one core each). Launching looks the same;
+  minute-long tasks no longer flood the queue, and HOOMD is loaded once per job.
+  `max_jobs` can be changed after launching, like the other cluster settings. `max_running` now counts jobs (one core each). Launching looks the same;
   the plan's Cluster line says how many jobs.
 - **New bookkeeping layout** (fewer files): `logs/` (one JSON per task) and `slurm/` (one
   output file per task) are replaced by `jobs/`:

@@ -20,8 +20,12 @@ description: ""                 # one line: what is this run for? (shown by nood
 sequences_csv: human_idrs_12k.csv
 name_column: id                 # column with a unique name for each protein
 sequence_column: sequence       # column with the one-letter amino-acid sequence
-rows: all                       # which rows to run: all, a single row like 7, or a
-                                #   range like 101-200 (counted from 1, header not counted)
+rows: all                       # which rows of the CSV to run, counted from 1 (header not counted):
+                                #   all             every row
+                                #   7               one row
+                                #   101-200         a range: rows 101 to 200 (a dash, not a list)
+                                #   [1-50, 75]      a list in brackets means several of the above,
+                                #                   as in physics below
 max_residues: 0                 # skip proteins longer than this (0 = no limit). A brush's cost
                                 #   grows ~N^3.2, so this keeps brush runs affordable (README section 4)
 
@@ -37,9 +41,14 @@ replicates: 1                   # independent copies (different random seeds) of
                                 #   protein under each physics set
 
 # ── Cluster (ignored when running on your own computer) ───────────────────────
+# These can still be changed after launching; they apply from the next ./noodle launch.
+max_jobs: 1000                  # split the run into at most this many SLURM jobs (a job = one core
+                                #   running its tasks one after another), of about equal work and
+                                #   grouped by chain length: the longest proteins get a job each, the
+                                #   shortest are pooled many to a job. With fewer tasks than this,
+                                #   every task gets its own job. 0 = no limit (one job per task).
 time_limit_days: 3              # time limit per SLURM job, in days (decimals are fine: 0.5 = 12 hours).
-                                #   Short tasks share a job of up to ~4 h; a longer task gets
-                                #   its own. A task that runs out of time saves a checkpoint
-                                #   first: ./noodle launch again resumes it from there.
+                                #   A task that runs out of time saves a checkpoint first:
+                                #   ./noodle launch again resumes it from there.
 max_running: 0                  # most jobs (= cores) running at the same time (0 = no limit)
 extra_sbatch: []                # anything else your cluster needs, e.g. ["--partition=normal"]

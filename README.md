@@ -85,13 +85,18 @@ Created runs/my_first_run/, run number 1
 |---|---|---|
 | `description` | one line saying what the run is for | `"Top 500 human IDRs, charged wall"` |
 | `sequences_csv` | the file with your sequences (see below) | `human_idrs_12k.csv` |
-| `rows` | which proteins of that file: `all`, one (`7`) or a range | `1-500` |
+| `rows` | which proteins of that file: `all`, one (`7`), a range with a dash (`1-500`), or several in brackets (`[1-50, 75]`) | `1-500` |
 | `physics` | how to simulate them (section 4); a list for several | `baseline` or `[baseline, grafted]` |
 | `replicates` | how many independent copies of each simulation | `3` |
 | `max_residues` | skip proteins longer than this (0 = no limit) | `200` |
 
-The other settings (`time_limit_days`, `max_running`, `extra_sbatch`) are for the
-cluster and are explained in the file itself.
+Square brackets always mean "several": several rows, several physics sets.
+
+The other settings are for the cluster and are explained in the file itself. One is
+worth knowing: **`max_jobs`** (default 1000), the most cluster jobs a run is split
+into. A small run gets one job per simulation, all running side by side. A large run
+is split by protein length: the longest proteins get a job each, and the short ones
+share jobs, so the cluster queue isn't flooded.
 
 **Sequences.** Two sets come with the code, in the `sequences/` folder:
 `human_idrs_12k.csv` (12,000 human disordered regions, 20-599 residues) and
