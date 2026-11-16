@@ -62,7 +62,7 @@ grafted:
                                       #   length as the residues. 0 = neutral surface
   wall_headroom: 2.0                  # nm; ceiling sits at contour length + this above the surface
 
-  # Brush: many chains of the same protein grafted on a square lattice (README section 3)
+  # Brush: many chains of the same protein grafted on a square lattice (REFERENCE.md, section 3.5)
   grafting_density: 0                 # chains per nm^2. 0 = a single chain in a box box_size wide
   chains: 100                         # a brush's number of chains, a square number (100 = a 10 x 10
                                       #   patch). The box is sqrt(chains / grafting_density) wide

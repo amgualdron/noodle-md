@@ -69,10 +69,12 @@ with a different run layout: finish them with the version that launched them
 
 ### Changed
 - Run names can't be only digits (those are run numbers now).
-- README rewritten for all of the above: the `noodle` alias and Tab completion, run
-  numbers, jobs, `log.csv`, cancel, export, and every column of the results tables with
-  its definition and caveats (model times, Kirkwood Rh, provisional brush run length,
-  kappa > 1). `src/run_template.yaml` explains the per-job time limit.
+- README rewritten short and plain, for users with no software background: setup,
+  a first run in six steps, the commands, the physics sets, the main result columns,
+  and fixes for common problems. `src/run_template.yaml` explains the per-job time limit.
+- New `REFERENCE.md`: the model, the pipeline step by step, every file and column,
+  the formulas of every descriptor and observable, how it is checked, the code's rules,
+  how to extend it, and the open items.
 - `./noodle check` runs its test simulations as one job and checks the new tables
   (in-job analysis, manifest columns per geometry, brush density profiles, reduced density).
 - **`./noodle analyze` pools instead of recomputing**: it gathers the job files into

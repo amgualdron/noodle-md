@@ -23,7 +23,7 @@ sequence_column: sequence       # column with the one-letter amino-acid sequence
 rows: all                       # which rows to run: all, a single row like 7, or a
                                 #   range like 101-200 (counted from 1, header not counted)
 max_residues: 0                 # skip proteins longer than this (0 = no limit). A brush's cost
-                                #   grows ~N^3.2, so this keeps brush runs affordable (README section 3)
+                                #   grows ~N^3.2, so this keeps brush runs affordable (README section 4)
 
 # ── Physics ───────────────────────────────────────────────────────────────────
 physics: baseline               # a set from physics.yaml, or several in one run, e.g.

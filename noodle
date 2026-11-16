@@ -23,7 +23,7 @@ noodle-md: simulations of disordered proteins (HOOMD-blue, HPS model), free, gra
 <run> is a run's name, its number (noodle status lists them), or nothing at all when
 you are inside its folder (runs/<name>/). Tab completes commands and run names once
 setup.sh's two lines are in your ~/.bashrc; without them, type ./noodle in this folder.
-Everything else: README.md
+Everything else: README.md (using it) and REFERENCE.md (how it works)
 EOF
 }
 
