@@ -65,8 +65,18 @@ Now `noodle` works anywhere, and the **Tab** key completes commands and run name
 
 ## 2. Your first run
 
-A **run** is one study: some proteins, some physics, in its own folder. Every run also
-gets a **number**, which you can type instead of its name.
+Three words you will see everywhere:
+
+| word | meaning | example |
+|---|---|---|
+| **run** | one study, in its own folder: a list of proteins and the conditions to simulate them in. Every run gets a **number**, which you can type instead of its name | `my_first_run`, number 1 |
+| **task** | one single simulation: one protein (or one brush of it) under one set of conditions | protein A, free in water |
+| **job** | one computer core on the cluster, working through one or more tasks, one after another | job 7 runs proteins A, B and C |
+
+One protein usually gives several tasks. Simulating it under two conditions (say free
+*and* attached to a surface) makes two tasks. Simulating it 3 times under the same
+conditions, to measure it more precisely, makes three tasks. So 100 proteins × 2
+conditions × 3 copies = 600 tasks.
 
 **Step 1. Make the run**
 
@@ -87,16 +97,25 @@ Created runs/my_first_run/, run number 1
 | `sequences_csv` | the file with your sequences (see below) | `human_idrs_12k.csv` |
 | `rows` | which proteins of that file: `all`, one (`7`), a range with a dash (`1-500`), or several in brackets (`[1-50, 75]`) | `1-500` |
 | `physics` | how to simulate them (section 4); a list for several | `baseline` or `[baseline, grafted]` |
-| `replicates` | how many independent copies of each simulation | `3` |
+| `replicates` | how many times to simulate each protein under each condition; more copies = smaller error bars | `3` |
 | `max_residues` | skip proteins longer than this (0 = no limit) | `200` |
 
 Square brackets always mean "several": several rows, several physics sets.
 
 The other settings are for the cluster and are explained in the file itself. One is
-worth knowing: **`max_jobs`** (default 1000), the most cluster jobs a run is split
-into. A small run gets one job per simulation, all running side by side. A large run
-is split by protein length: the longest proteins get a job each, and the short ones
-share jobs, so the cluster queue isn't flooded.
+worth knowing: **`max_jobs`** (default 1000), the most jobs (cores) a run is split into.
+
+- **Fewer tasks than `max_jobs`:** every task gets its own job, and they all run at the
+  same time. A run of 20 short tasks finishes as fast as its slowest task.
+- **More tasks than `max_jobs`:** tasks share jobs, grouped by protein length. The
+  longest proteins get a job each; the shortest are bundled, many to a job, so each job
+  has about the same amount of work. For example, 12,000 proteins with `max_jobs: 1000`:
+  every protein over ~330 residues runs alone, while the ~3,900 shortest (20-37
+  residues) share the last job.
+
+The grouping only depends on the proteins, so the same run always gives the same jobs,
+and `noodle launch` shows it before you agree. Set `max_jobs: 0` for one job per task,
+whatever the size.
 
 **Sequences.** Two sets come with the code, in the `sequences/` folder:
 `human_idrs_12k.csv` (12,000 human disordered regions, 20-599 residues) and
@@ -114,7 +133,7 @@ column `id` (a unique name per protein) and a column `sequence` (one-letter code
 noodle launch my_first_run
 ```
 
-It checks your settings, shows what it will do (how many simulations, roughly how
+It checks your settings, shows what it will do (how many tasks and jobs, roughly how
 long, how much disk space) and asks before starting. On the cluster you can then log
 out. On your own computer the simulations run in that terminal.
 
@@ -157,7 +176,7 @@ run's folder.
 | `noodle status` | every run, with its number |
 | `noodle analyze <run>` | gathers the results into tables |
 | `noodle export <run> <run> ...` | copies the results of one or more runs into `exports/` |
-| `noodle cancel <run>` | stops the run's simulations on the cluster (`launch` continues them later) |
+| `noodle cancel <run>` | stops the run's jobs on the cluster (`launch` continues them later) |
 | `noodle clean <run>` | deletes the large simulation files, keeping the results (section 6) |
 | `noodle check` | tests that everything works |
 | `noodle help` | this list; `noodle help <command>` explains one command in detail |
@@ -206,7 +225,7 @@ brush runs. The launch shows the cost before you agree.
 | file | what is in it |
 |---|---|
 | **`manifest.csv`** | **the main result**: one row per protein and physics set |
-| `analysis/replicates.csv` | the same, one row per single simulation, to see how much copies differ |
+| `analysis/replicates.csv` | the same, one row per task, to see how much copies differ |
 | `analysis/profiles.csv` | curves, e.g. how density changes with height above the surface |
 | `analysis/report.json` | a summary, and which rows to be careful with |
 
@@ -236,12 +255,12 @@ Every column is defined in [REFERENCE.md](REFERENCE.md#7-observables-and-statist
 
 ## 6. Good to know
 
-- **Nothing is lost when a simulation stops.** On the cluster each job has a time limit.
-  Shortly before it, a simulation saves its progress and stops. The same happens with
+- **Nothing is lost when a task stops.** On the cluster each job has a time limit.
+  Shortly before it, the task running saves its progress and stops. The same happens with
   `noodle cancel` or Ctrl-C. Run `noodle launch <run>` again, and it continues
   from where it stopped. Running `launch` again is always safe: finished and still
-  queued simulations are left alone.
-- **Failed simulations** are shown by `noodle status` with their error. Fix the cause
+  queued tasks are left alone.
+- **Failed tasks** are shown by `noodle status` with their error. Fix the cause
   first; `noodle launch` asks before trying them again.
 - **A launched run is frozen.** Changing `run.yaml` or `physics.yaml` afterwards
   doesn't change it (except the cluster settings). For something different, make a
