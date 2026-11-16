@@ -59,6 +59,12 @@ with a different run layout: finish them with the version that launched them
 - Tab completion (`noodle-completion.bash`): commands, then run names. `setup.sh` ends by
   printing two lines to add to `~/.bashrc`: an alias, so `noodle` works from any folder,
   and the line that loads the completion.
+- `./noodle export <run> [<run> ...]`: brings each run's analysis up to date, then writes
+  `exports/<name>/` with the runs' `manifest.csv`, `replicates.csv` and `profiles.csv`
+  merged (first column `run`), their rows of `runs.csv`, and `physics/<run>.yaml`. One
+  run: named after it; several: it asks, suggesting the common part of their names. Warns
+  about unfinished runs and about a physics set name with different settings in different
+  runs. `exports/` is ignored by git.
 - scipy is listed in `src/environment.yml` (it was already installed through MDAnalysis).
 
 ### Changed

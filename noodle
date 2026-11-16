@@ -37,6 +37,7 @@ program_of() {
         status)  echo status.py ;;
         analyze) echo analyze_run.py ;;
         cancel)  echo cancel_run.py ;;
+        export)  echo export_runs.py ;;
         clean)   echo clean_run.py ;;
         check)   echo check_physics.py ;;
     esac
