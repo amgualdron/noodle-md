@@ -224,11 +224,12 @@ def plan_tasks(run_dir, settings):
     tasks = []
     for name, sequence in sequences.items():
         for physics_name in physics_names:
-            for replicate in range(1, settings["replicates"] + 1):
+            # One seed per replicate, all different: two replicates with the same seed would
+            # be the same simulation. HOOMD seeds are 16-bit numbers.
+            seeds = random.sample(range(1, 65536), settings["replicates"])
+            for replicate, seed in enumerate(seeds, 1):
                 tasks.append(dict(task_id=len(tasks) + 1, sequence_name=name, physics=physics_name,
-                                  replicate=replicate,
-                                  seed=random.randint(1, 65535),  # HOOMD seeds are 16-bit numbers
-                                  length=len(sequence), sequence=sequence))
+                                  replicate=replicate, seed=seed, length=len(sequence), sequence=sequence))
     return sequences, skipped, too_long, physics, tasks
 
 

@@ -7,6 +7,10 @@ with a different run layout: finish them with the version that launched them
 
 ## v2 (in progress, branch `release`)
 
+### Fixed
+- Replicates of the same protein under the same physics set always get different
+  random seeds (before, two could draw the same seed and be the same simulation).
+
 ### Removed
 - `./noodle calibrate` and `experiments/` (the brush calibration experiment). It was a
   private test harness and is not part of the released tool. It lives on in the tag
