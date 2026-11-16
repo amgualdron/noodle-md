@@ -13,6 +13,7 @@ overwrite each other's information:
     jobs/submitted.csv           launch_run.py, one line per job it submits
     jobs/job_0007.csv            launch_run.py writes it just before submitting job 7; from
                                  then on only job 7 itself (simulate.py) updates it
+    jobs/job_0007_profiles.csv   job 7, the profiles of each task it analysed
     jobs/job_0007.out            everything job 7 printed
     log.csv                      status.py: every task's current state, merged from jobs/
     analysis/                    analyze_run.py
@@ -20,15 +21,20 @@ overwrite each other's information:
 
 A task's current state is its row in the newest job file that lists it: a task that is
 resumed or retried gets a row in a new job, and its rows in older jobs are history.
+
+runs/runs.csv, the list of every run with its number, is written only by ./noodle commands
+(new, launch, status, analyze), never by jobs.
 """
 
 import csv
 import getpass
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -44,30 +50,132 @@ SEQUENCES = ROOT / "sequences"  # the shared sequence sets
 RESIDUE_STEPS_PER_SECOND = 1.0e6
 
 
+# ── The list of runs: runs/runs.csv ───────────────────────────────────────────
+REGISTRY = RUNS / "runs.csv"
+REGISTRY_COLUMNS = ["number", "name", "description", "created", "launched", "finished", "proteins",
+                    "physics_sets", "replicates", "tasks", "jobs", "done", "failed", "analysed",
+                    "core_hours", "trajectories_gb", "last_checked"]
+
+
+def registry():
+    """The rows of runs/runs.csv: one per run ever made in this copy of noodle-md, with its
+    number. A run folder without a row (made by an older version, or copied in) gets one.
+    Numbers are never reused: a run's row stays when its folder is deleted."""
+    rows = read_csv(REGISTRY) if REGISTRY.exists() else []
+    known = {row["name"] for row in rows}
+    folders = [p for p in RUNS.glob("*") if (p / "run.yaml").exists() and p.name not in known]
+    for run_dir in sorted(folders, key=lambda p: p.stat().st_mtime):
+        add_run(rows, run_dir)
+    if folders:
+        write_csv(rows, REGISTRY, REGISTRY_COLUMNS)
+    return rows
+
+
+def add_run(rows, run_dir):
+    """Give a run folder the next number (a new row in `rows`); returns the number."""
+    text = (run_dir / "run.yaml").read_text()
+    created = re.search(r"\(created (\d{4}-\d\d-\d\d)\)", text)  # from its first line
+    number = max((row["number"] for row in rows), default=0) + 1
+    rows.append(dict(number=number, name=run_dir.name, description=(yaml.safe_load(text) or {}).get("description"),
+                     created=created.group(1) if created else None))
+    return number
+
+
+def registry_row(rows, name):
+    """The row of the run called `name` (the newest, if a deleted run had the same name)."""
+    matches = [row for row in rows if row["name"] == name]
+    return matches[-1] if matches else None
+
+
+def update_registry(run_dir, **fields):
+    rows = registry()
+    registry_row(rows, run_dir.name).update(fields)
+    write_csv(rows, REGISTRY, REGISTRY_COLUMNS)
+
+
+def refresh_registry(run_dir, states=None):
+    """Update the run's numbers in runs/runs.csv: tasks done, failed, analysed, core-hours..."""
+    settings = yaml.safe_load((run_dir / "run.yaml").read_text()) or {}
+    fields = dict(description=settings.get("description"), last_checked=datetime.now().isoformat(timespec="seconds"))
+    if (run_dir / "tasks.csv").exists():
+        tasks = read_tasks(run_dir)
+        states = task_states(run_dir) if states is None else states
+        statuses = [state["status"] for state in states.values()]
+        reanalysed = run_dir / "analysis" / "reanalysed.csv"
+        analysed = {i for i, state in states.items() if state.get("analysed_at")}
+        analysed |= {row["task_id"] for row in read_csv(reanalysed)} if reanalysed.exists() else set()
+        finished = [state["completed_at"] for state in states.values() if state.get("completed_at")]
+        fields.update(
+            proteins=len({t["sequence_name"] for t in tasks}), physics_sets=len({t["physics"] for t in tasks}),
+            replicates=max(t["replicate"] for t in tasks), tasks=len(tasks), jobs=len(job_numbers(run_dir)),
+            done=statuses.count("completed"), failed=statuses.count("failed"), analysed=len(analysed),
+            core_hours=round(sum(state.get("run_time_s") or 0 for state in states.values()) / 3600, 2),
+            trajectories_gb=round(sum(p.stat().st_size for p in (run_dir / "trajectories").glob("*.gsd")) / 1e9, 3),
+            finished=max(finished) if statuses.count("completed") == len(tasks) else None)
+    update_registry(run_dir, **fields)
+
+
 # ── Choosing a run ────────────────────────────────────────────────────────────
+def where_you_are():
+    """The folder ./noodle was typed in (the wrapper passes it on, then moves to ROOT)."""
+    return Path(os.environ.get("NOODLE_CWD", ".")).resolve()
+
+
+def run_here():
+    """The run folder you are in (or in a subfolder of), or None."""
+    here = where_you_are()
+    if here.is_relative_to(RUNS) and here != RUNS:
+        run_dir = RUNS / here.relative_to(RUNS).parts[0]
+        if (run_dir / "run.yaml").exists():
+            return run_dir
+    return None
+
+
+def find_run(text):
+    """The run folder that `text` stands for: a run name, a run number from runs/runs.csv,
+    or a path to the run folder (what tab completes to). None if there is no such run."""
+    if (RUNS / text / "run.yaml").exists():
+        return RUNS / text
+    path = (where_you_are() / text).resolve()
+    if path.is_relative_to(RUNS) and path != RUNS:
+        run_dir = RUNS / path.relative_to(RUNS).parts[0]
+        if (run_dir / "run.yaml").exists():
+            return run_dir
+    if text.isdigit():
+        row = next((row for row in registry() if row["number"] == int(text)), None)
+        if row and (RUNS / row["name"] / "run.yaml").exists():
+            return RUNS / row["name"]
+        if row:
+            sys.exit(f"Run {text} ({row['name']}) no longer exists: its folder was deleted.")
+    return None
+
+
 def list_runs():
-    """Print every run folder with its description."""
-    runs = sorted(p for p in RUNS.glob("*") if (p / "run.yaml").exists()) if RUNS.exists() else []
-    if not runs:
-        print("There are no runs yet. Make one with ./noodle new <run name>")
+    """Print every run with its number, how far along it is and its description."""
+    rows = [row for row in registry() if (RUNS / row["name"] / "run.yaml").exists()]
+    if not rows:
+        print("There are no runs yet. Make one with: noodle new <run name>")
         return
-    print("Existing runs:")
-    for run_dir in runs:
-        settings = yaml.safe_load((run_dir / "run.yaml").read_text()) or {}
-        tasks = len(read_tasks(run_dir)) if (run_dir / "tasks.csv").exists() else 0
-        state = f"{tasks} tasks" if tasks else "not launched"
-        print(f"  {run_dir.name:32s} {state:>14s}   {settings.get('description') or ''}")
+    width = max(len(row["name"]) for row in rows)
+    print(f"  {'#':>3}  {'run':{width}}  {'progress':24}  description")
+    for row in rows:
+        if not row.get("tasks"):
+            state = "not launched yet"
+        else:
+            state = f"{row['done']} of {row['tasks']} done" + (f", {row['failed']} failed" if row.get("failed") else "")
+        print(f"  {row['number']:>3}  {row['name']:{width}}  {state:24}  {row.get('description') or ''}")
 
 
 def run_from_command_line(usage):
-    """The run folder named on the command line, or print usage and the runs and stop."""
-    if len(sys.argv) != 2:
-        print(f"Usage: {usage}\n")
-        list_runs()
-        sys.exit(1)
-    run_dir = RUNS / sys.argv[1]
-    if not (run_dir / "run.yaml").exists():
-        print(f"There is no run called '{sys.argv[1]}'.\n")
+    """The run named on the command line (by name, number or path), or the run folder you
+    are in when none is named. Otherwise print the usage and the runs, and stop."""
+    args = sys.argv[1:]
+    run_dir = find_run(args[0]) if len(args) == 1 else run_here() if not args else None
+    if run_dir is None:
+        if len(args) == 1:
+            print(f"There is no run called '{args[0]}'.\n")
+        else:
+            print(f"Usage: {usage}   (a run's name or number, or nothing inside its folder)\n")
         list_runs()
         sys.exit(1)
     return run_dir
@@ -75,7 +183,7 @@ def run_from_command_line(usage):
 
 # ── CSV tables ────────────────────────────────────────────────────────────────
 # Columns that always hold text, even when a value looks like a number (a protein named 171)
-TEXT_COLUMNS = {"name", "sequence_name", "sequence", "physics", "error", "analysis_error", "run",
+TEXT_COLUMNS = {"name", "description", "sequence_name", "sequence", "physics", "error", "analysis_error", "run",
                 "slurm_job", "profile", "x_unit", "value_unit"}
 
 

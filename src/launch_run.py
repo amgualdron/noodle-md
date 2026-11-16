@@ -34,8 +34,8 @@ import yaml
 
 from runs import (RESIDUE_STEPS_PER_SECOND, ROOT, SEQUENCES, about, brush_size, checkpoint_path, compress,
                   conditions, file_size, job_numbers, measured_speeds, read_submissions, read_tasks,
-                  run_from_command_line, run_lengths, seconds_left, slurm_queue, task_states, write_csv,
-                  write_job)
+                  refresh_registry, run_from_command_line, run_lengths, seconds_left, slurm_queue, task_states,
+                  update_registry, write_csv, write_job)
 
 # The 20 standard amino acids: the same letters as the residue table in forcefield.py
 # (repeated here so this script does not have to load HOOMD).
@@ -569,7 +569,7 @@ def estimated_seconds(run_dir, task_ids, tasks, physics):
 
 
 def main():
-    run_dir = run_from_command_line("./noodle launch <run name>")
+    run_dir = run_from_command_line("noodle launch <run>")
     settings = yaml.safe_load((run_dir / "run.yaml").read_text())
     check_run_settings(settings)
     on_cluster = shutil.which("sbatch") is not None
@@ -583,6 +583,7 @@ def main():
             print("Nothing was launched.")
             return
         write_tasks(run_dir, settings, sequences, row_numbers, physics, tasks)
+        update_registry(run_dir, launched=datetime.now().isoformat(timespec="seconds"))
     else:
         if (run_dir / "run.yaml").stat().st_mtime > (run_dir / "tasks.csv").stat().st_mtime:
             print("Note: run.yaml was edited after this run was launched. Only time_limit_days, "
@@ -596,6 +597,7 @@ def main():
         print(f"Starting {len(to_start)} task(s) in {len(groups)} job(s) of up to ~{job_target_hours(settings):g} h.")
 
     jobs = write_jobs(run_dir, groups, read_tasks(run_dir), task_states(run_dir))
+    refresh_registry(run_dir)
     if on_cluster:
         submit_to_slurm(run_dir, settings, jobs)
     else:

@@ -1,31 +1,67 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-# ./noodle <command> <run name>     the one command of noodle-md (see README)
-#
-#   ./noodle new     <run>   make a run folder with a settings file to fill in
-#   ./noodle launch  <run>   start it (and resume anything that stopped)
-#   ./noodle status  [run]   see how it's going (no name: list every run)
-#   ./noodle analyze <run>   turn finished simulations into CSV tables
-#   ./noodle clean   <run>   delete the trajectories of analysed tasks (copy them to the NAS first)
-#   ./noodle check           physics self-test (setup.sh runs it too)
+# noodle <command> [run]     the one command of noodle-md: noodle help lists them
 #
 # This only starts the matching program in src/ with the tool's own Python (env/,
 # made by setup.sh), so conda never needs to be loaded or activated.
 # ─────────────────────────────────────────────────────────────────────────────
+
+show_help() {
+    cat <<'EOF'
+noodle-md: simulations of disordered proteins (HOOMD-blue, HPS model), free, grafted or in brushes
+
+  noodle new     <name>   make a run folder with a settings file (run.yaml) to fill in
+  noodle launch  <run>    show the plan and start it; later, continue whatever stopped
+  noodle status  [run]    how it is going (no run: every run, with its number)
+  noodle analyze <run>    gather the results into manifest.csv and analysis/
+  noodle cancel  <run>    take its jobs out of the SLURM queue (launch continues it later)
+  noodle export  <run>... copy the results of one or more runs into exports/<name>/
+  noodle clean   <run>    delete the trajectories of analysed tasks (copy them to the NAS first)
+  noodle check            physics self-test (setup.sh runs it too)
+  noodle help [command]   this list, or what one command does in detail
+
+<run> is a run's name, its number (noodle status lists them), or nothing at all when
+you are inside its folder (runs/<name>/). Tab completes commands and run names once
+setup.sh's two lines are in your ~/.bashrc; without them, type ./noodle in this folder.
+Everything else: README.md
+EOF
+}
+
+export NOODLE_CWD="$PWD"  # where you are, so a run can be picked by being in its folder
 cd "$(dirname "$(readlink -f "$0")")" || exit 1
 
-case "$1" in
-    new)     program=new_run.py ;;
-    launch)  program=launch_run.py ;;
-    status)  program=status.py ;;
-    analyze) program=analyze_run.py ;;
-    clean)   program=clean_run.py ;;
-    check)   program=check_physics.py ;;
-    *)
-        sed -n '4,11p' "$0" | sed 's/^# \{0,1\}//'
-        exit 1 ;;
-esac
+program_of() {
+    case "$1" in
+        new)     echo new_run.py ;;
+        launch)  echo launch_run.py ;;
+        status)  echo status.py ;;
+        analyze) echo analyze_run.py ;;
+        cancel)  echo cancel_run.py ;;
+        clean)   echo clean_run.py ;;
+        check)   echo check_physics.py ;;
+    esac
+}
+
+command=$1
 shift
+case "$command" in
+    help|-h|--help|"")
+        program=$(program_of "$1")
+        if [ -n "$program" ]; then  # the explanation at the top of that command's program
+            python=env/bin/python; [ -x $python ] || python=python3
+            $python -c 'import ast, sys; print(ast.get_docstring(ast.parse(open(sys.argv[1]).read())))' "src/$program"
+        else
+            show_help
+        fi
+        exit 0 ;;
+esac
+program=$(program_of "$command")
+if [ -z "$program" ]; then
+    echo "There is no command '$command'."
+    echo
+    show_help
+    exit 1
+fi
 
 if [ ! -x env/bin/python ]; then echo "The environment is missing: run setup.sh first (see README)."; exit 1; fi
 export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1  # without these numpy crashes on cluster login nodes

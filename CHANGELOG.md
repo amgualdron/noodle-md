@@ -43,9 +43,26 @@ with a different run layout: finish them with the version that launched them
   Checked on shapes with known answers (rod, ring, random walk, upright grafted rod,
   synthetic brush), interchain contacts against brute force, and Rg, kappa^2 and Ree
   against MDAnalysis on simulated trajectories (identical).
+- **Run numbers**: `runs/runs.csv` lists every run with a number (given by `./noodle new`,
+  never reused) and run-wide figures: description, created / launched / finished dates,
+  proteins, physics sets, replicates, tasks, jobs, done, failed, analysed, core-hours,
+  trajectory size (GB), last checked. `new`, `launch`, `status` and `analyze` keep it up
+  to date (never the jobs). Runs made before it get a number the first time it is read.
+  `./noodle status` without a run prints it.
+- **Choosing a run without typing its name**: wherever a run is asked for, give its name,
+  its number, a path to its folder (what Tab completes to, e.g. `runs/my_run/`), or
+  nothing when you are inside its folder (or a subfolder).
+- `./noodle cancel <run>`: counts the run's jobs in the queue, asks, then `scancel`s them.
+  Running tasks save a checkpoint first; `./noodle launch` continues the run later.
+- `./noodle help` lists the commands; `./noodle help <command>` explains one in detail
+  (the description at the top of its program). Unknown commands show the list too.
+- Tab completion (`noodle-completion.bash`): commands, then run names. `setup.sh` ends by
+  printing two lines to add to `~/.bashrc`: an alias, so `noodle` works from any folder,
+  and the line that loads the completion.
 - scipy is listed in `src/environment.yml` (it was already installed through MDAnalysis).
 
 ### Changed
+- Run names can't be only digits (those are run numbers now).
 - **`./noodle analyze` pools instead of recomputing**: it gathers the job files into
   `analysis/replicates.csv` (one row per task), `analysis/profiles.csv` (each profile
   averaged over replicates, with `err`) and `analysis/report.json` (counts, the range of

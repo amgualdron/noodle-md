@@ -35,8 +35,8 @@ import pandas as pd
 import yaml
 
 from observables import BRUSH_OBSERVABLES, DIAGNOSTICS, GRAFTED_OBSERVABLES, OBSERVABLES, analyse_task
-from runs import (job_numbers, profiles_file, read_csv, read_tasks, run_from_command_line, run_lengths,
-                  task_states, trajectory_path, write_csv)
+from runs import (job_numbers, profiles_file, read_csv, read_tasks, refresh_registry, run_from_command_line,
+                  run_lengths, task_states, trajectory_path, write_csv)
 
 FEW_SAMPLES = 20  # fewer independent samples than this (all replicates together): too short to trust
 SHOWN = 5         # rows named per warning on screen (report.json names them all)
@@ -265,13 +265,14 @@ def analyze(run_dir):
     report = build_report(run_dir, tasks, states, results, errors, manifest)
     (run_dir / "analysis" / "report.json").write_text(json.dumps(report, indent=2) + "\n")
 
+    refresh_registry(run_dir, states)
     print_report(report)
     print(f"  -> manifest.csv, analysis/replicates.csv, analysis/profiles.csv, analysis/report.json")
     return set(results)
 
 
 def main():
-    analyze(run_from_command_line("./noodle analyze <run name>"))
+    analyze(run_from_command_line("noodle analyze <run>"))
 
 
 if __name__ == "__main__":

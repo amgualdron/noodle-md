@@ -8,7 +8,8 @@
 #   on your own computer:    bash setup.sh
 #
 # After this you never need to load or activate conda again: ./noodle calls
-# ./env/bin/python directly.
+# ./env/bin/python directly. At the end it prints two lines for your ~/.bashrc, so
+# that noodle works from any folder and Tab completes commands and run names.
 # To rebuild from scratch, delete the env folder and run this again.
 # ─────────────────────────────────────────────────────────────────────────────
 #SBATCH --job-name=noodle-setup
@@ -44,4 +45,12 @@ echo
 echo
 ./env/bin/python src/check_physics.py || exit 1
 echo
-echo "Setup finished ($(date)). Start a run with:  ./noodle new <run name>"
+echo "Setup finished ($(date))."
+echo
+echo "To type noodle from any folder, with Tab completing commands and run names, add these"
+echo "two lines to the end of your ~/.bashrc (then open a new terminal):"
+echo
+echo "    alias noodle='$PWD/noodle'"
+echo "    source '$PWD/noodle-completion.bash'"
+echo
+echo "Then start a run with:  noodle new <run name>      (noodle help lists every command)"

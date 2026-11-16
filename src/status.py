@@ -1,6 +1,7 @@
-"""./noodle status [run name]  --  how a run is going: done, running, waiting, stopped, failed.
+"""./noodle status [run]  --  how a run is going: done, running, waiting, stopped, failed.
 
-With no name, it lists every run with how far along it is.
+With no run (outside a run folder), it lists every run with its number and how far along
+it is, from runs/runs.csv, which it brings up to date.
 
 The report is printed, each list showing at most SHOW_ON_SCREEN tasks. Every task, with
 its state, progress, job and error, is also written to runs/<run name>/log.csv (open it
@@ -20,8 +21,9 @@ from datetime import datetime
 
 import yaml
 
-from runs import (RUNS, about, compress, duration, measured_speeds, read_submissions, read_tasks,
-                  run_from_command_line, seconds_left, slurm_queue, task_states, write_csv)
+from runs import (RUNS, about, compress, duration, list_runs, measured_speeds, read_submissions, read_tasks,
+                  refresh_registry, run_from_command_line, run_here, seconds_left, slurm_queue, task_states,
+                  write_csv)
 
 SHOW_ON_SCREEN = 10  # tasks per list on screen (log.csv lists them all)
 LIST_DONE_UP_TO = 20  # runs with this many tasks or fewer also list every finished task
@@ -281,30 +283,18 @@ def write_log_csv(run_dir, rows, submitted):
 
 # ── Every run at a glance ─────────────────────────────────────────────────────
 def list_all_runs():
-    runs = sorted(p for p in RUNS.glob("*") if (p / "run.yaml").exists()) if RUNS.exists() else []
-    if not runs:
-        print("There are no runs yet. Make one with ./noodle new <run name>")
-        return
-    width = max(len(p.name) for p in runs)
-    for run_dir in runs:
-        settings = yaml.safe_load((run_dir / "run.yaml").read_text()) or {}
-        if (run_dir / "tasks.csv").exists():
-            tasks = read_tasks(run_dir)
-            statuses = Counter(state["status"] for state in task_states(run_dir).values())
-            state = f"{statuses['completed']} of {len(tasks)} done"
-            if statuses["failed"]:
-                state += f", {statuses['failed']} failed"
-        else:
-            state = "not launched yet"
-        print(f"  {run_dir.name:{width}}  {state:24s}  {settings.get('description') or ''}")
-    print("\nDetails of one run: ./noodle status <run name>")
+    for run_dir in sorted(RUNS.glob("*")) if RUNS.exists() else []:
+        if (run_dir / "run.yaml").exists():
+            refresh_registry(run_dir)
+    list_runs()
+    print("\nDetails of one run: noodle status <run name or number>   (all numbers: runs/runs.csv)")
 
 
 def main():
-    if len(sys.argv) == 1:
+    if len(sys.argv) == 1 and run_here() is None:
         list_all_runs()
         return
-    run_dir = run_from_command_line("./noodle status <run name>")
+    run_dir = run_from_command_line("noodle status <run>")
     settings = yaml.safe_load((run_dir / "run.yaml").read_text())
     if not (run_dir / "tasks.csv").exists():
         print(f"'{run_dir.name}' has not been launched yet: ./noodle launch {run_dir.name}")
@@ -324,6 +314,7 @@ def main():
     color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
     print("\n".join(build_report(run_dir, settings, rows, speeds, color, SHOW_ON_SCREEN)))
     write_log_csv(run_dir, rows, submitted)
+    refresh_registry(run_dir, states)
 
 
 if __name__ == "__main__":

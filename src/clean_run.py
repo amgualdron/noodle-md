@@ -56,7 +56,7 @@ def total_size(paths):
 
 
 def main():
-    run_dir = run_from_command_line("./noodle clean <run name>")
+    run_dir = run_from_command_line("noodle clean <run>")
     name = run_dir.name
     if not (run_dir / "tasks.csv").exists():
         sys.exit(f"'{name}' has not been launched yet: there is nothing to clean.")
