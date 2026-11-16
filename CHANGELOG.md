@@ -20,7 +20,43 @@ with a different run layout: finish them with the version that launched them
   0.0009 and 1, as published); it can exceed 1 for ~2% of sequences, mostly ones with
   few charges.
 
+- **Every task is analysed by its own job, right after it finishes** (`src/observables.py`;
+  seconds for a chain, about half a minute for a brush). Averages, each with a
+  block-average error bar (`<name>_err`), go into the task's row of its job file; profiles
+  go into `jobs/job_0007_profiles.csv`. Lengths in nm, times in model units (tu).
+  - every chain: `rg_nm`, `rg_sq_nm2`, `rg_sd_nm`, `rh_nm` (Kirkwood), `ree_nm`,
+    `ree_sq_nm2`, `asphericity`, `shape_anisotropy` (relative shape anisotropy kappa^2,
+    not the sequence kappa), `prolateness`, `transverse_rms_nm`, `nu` and `r0_nm`
+    (R_ij = r0 |i-j|^nu for |i-j| >= 5), `bond_cos`, `persistence_nm` (Flory's
+    projection), `contacts_per_residue` (|i-j| >= 3, closer than 1.5 x the mean diameter)
+  - grafted chains and brushes: `com_height_nm`, `end_height_nm`, `max_height_nm`,
+    `height_95_nm`, `rg_perp_nm`, `rg_par_nm`, `end_lateral_rms_nm`, `tilt_cos`,
+    `bond_order` (P2 of the bonds with the normal), `adsorbed_fraction`
+  - brushes: `brush_height_nm` (2 x mean residue height), `concentration_mg_ml` (below
+    height_95), `interchain_contacts_per_residue`, `lateral_heterogeneity`; and, in the
+    manifest, `reduced_density` (grafting density x pi <Rg^2> of the same protein as a
+    single chain in the same run)
+  - diagnostics: `tau_rg_tu`, `tau_ree_tu`, `independent_samples`, `drift`
+  - profiles: `internal_distance`, `bond_correlation`, `residue_contacts`; grafted:
+    `density`, `mass_density`, `charge_density`, `end_density` (vs height),
+    `residue_height`, `residue_adsorption`; brushes: `residue_interchain_contacts`
+  Checked on shapes with known answers (rod, ring, random walk, upright grafted rod,
+  synthetic brush), interchain contacts against brute force, and Rg, kappa^2 and Ree
+  against MDAnalysis on simulated trajectories (identical).
+- scipy is listed in `src/environment.yml` (it was already installed through MDAnalysis).
+
 ### Changed
+- **`./noodle analyze` pools instead of recomputing**: it gathers the job files into
+  `analysis/replicates.csv` (one row per task), `analysis/profiles.csv` (each profile
+  averaged over replicates, with `err`) and `analysis/report.json` (counts, the range of
+  each observable per physics set, rows that drift or have fewer than 20 independent
+  samples, tasks that could not be analysed), and fills the results columns of
+  `manifest.csv`: `replicates`, then every observable averaged over replicates, with the
+  standard error between replicates (or a lone replicate's block error). It takes
+  seconds. A task its job could not analyse is analysed by `analyze` instead
+  (`analysis/reanalysed.csv`). `analysis/summary.csv`, `analysis/timeseries/` and
+  `analysis/profiles/` are gone: the per-task results in `jobs/` replace them, and keep
+  working after `./noodle clean` deletes the trajectories.
 - **Tasks are grouped into jobs.** A job is one SLURM array element (one core) that runs
   its tasks one after another. `./noodle launch` packs short tasks into jobs of up to
   ~4 h (estimated; at most half of `time_limit_days`), longest first ("first fit

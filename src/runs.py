@@ -75,7 +75,8 @@ def run_from_command_line(usage):
 
 # ── CSV tables ────────────────────────────────────────────────────────────────
 # Columns that always hold text, even when a value looks like a number (a protein named 171)
-TEXT_COLUMNS = {"name", "sequence_name", "sequence", "physics", "error", "run", "slurm_job"}
+TEXT_COLUMNS = {"name", "sequence_name", "sequence", "physics", "error", "analysis_error", "run",
+                "slurm_job", "profile", "x_unit", "value_unit"}
 
 
 def read_csv(path):
@@ -135,26 +136,31 @@ def checkpoint_path(run_dir, task_id):
     return run_dir / "checkpoints" / f"task_{task_id:04d}.gsd"
 
 
-# The columns of a job file, in order: who the task is, then how it is going
-# (columns added later, like the analysis results, follow these)
+# The columns of a job file, in order: who the task is, how it is going, and when it was
+# analysed; the analysis results (observables.py) follow these
 JOB_COLUMNS = ["task_id", "sequence_name", "physics", "replicate", "N", "chains", "status", "phase",
                "step", "total_steps", "steps_per_second", "run_time_s", "attempts", "frames", "host",
-               "started_at", "last_update", "completed_at", "stop_reason", "error"]
+               "started_at", "last_update", "completed_at", "stop_reason", "error", "analysed_at",
+               "analysis_error"]
 # status of a task in a job file:
 #   submitted  in a job that has not reached it yet
 #   running    running now (or the job died without saying so: ./noodle status tells)
 #   stopped    stopped itself when asked (time limit, scancel, Ctrl-C), after a checkpoint
 #   failed     ended with an error (in the column error; the full message in the job's .out)
-#   completed  done
+#   completed  done; analysed right away by the job (analysed_at, or analysis_error if that failed)
 
 
 def job_file(run_dir, job):
     return run_dir / "jobs" / f"job_{job:04d}.csv"
 
 
+def profiles_file(run_dir, job):
+    return run_dir / "jobs" / f"job_{job:04d}_profiles.csv"
+
+
 def job_numbers(run_dir):
     """The numbers of every job of the run, in order."""
-    return sorted(int(p.stem.split("_")[1]) for p in (run_dir / "jobs").glob("job_*.csv"))
+    return sorted(int(p.stem.split("_")[1]) for p in (run_dir / "jobs").glob("job_[0-9][0-9][0-9][0-9].csv"))
 
 
 def read_job(run_dir, job):

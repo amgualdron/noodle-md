@@ -2,8 +2,9 @@
 
 Trajectories are big (megabytes per task) and only needed to compute new things, so
 once they are copied to long-term storage (the group NAS, by Globus) they can go:
-  1. every completed task is analysed first (as ./noodle analyze), so its timeseries
-     and summaries are saved in analysis/;
+  1. the results are pooled first (as ./noodle analyze). Every completed task was
+     analysed by its job (or else is analysed now), and its results stay in jobs/ and
+     analysis/, so ./noodle analyze keeps working without the trajectories;
   2. the SHA-256 checksum of each trajectory is added to trajectories.sha256, a record
      of exactly what was deleted that any copy can be checked against;
   3. it shows what it would delete and keep, and deletes only once you type the run's
@@ -60,7 +61,7 @@ def main():
     if not (run_dir / "tasks.csv").exists():
         sys.exit(f"'{name}' has not been launched yet: there is nothing to clean.")
 
-    print("Analysing first (a trajectory is only deleted once its timeseries is saved)")
+    print("Analysing first (a trajectory is only deleted once its results are saved)")
     analysed = analyze(run_dir)
     print()
 
@@ -116,8 +117,8 @@ def main():
     for path in trajectories + leftovers:
         path.unlink(missing_ok=True)
     print(f"Deleted {len(trajectories) + len(leftovers)} file(s), {freed} freed.")
-    print(f"./noodle analyze {name} keeps working from analysis/timeseries/; to compute something new "
-          f"from the trajectories, copy them back into runs/{name}/trajectories/.")
+    print(f"./noodle analyze {name} keeps working (the results are in jobs/ and analysis/); to compute "
+          f"something new from the trajectories, copy them back into runs/{name}/trajectories/.")
 
 
 if __name__ == "__main__":

@@ -20,11 +20,12 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from analyze_run import PROFILE_BIN, analyze
+from analyze_run import analyze
 from forcefield import (AA_PARAMS, AMINO_ACIDS, debye_huckel, residue_pair_forces, thermal_energy,
                         wall_contact_distance, wall_forces)
-from launch_run import resolve_physics, write_jobs
-from runs import ROOT, brush_size, read_tasks, task_states, trajectory_path
+from launch_run import resolve_physics, write_jobs, write_manifest
+from observables import PROFILE_BIN
+from runs import ROOT, brush_size, read_csv, read_tasks, task_states, trajectory_path
 from simulate import system_geometry
 
 ALL_SETS = yaml.safe_load((ROOT / "physics.yaml").read_text())
@@ -191,6 +192,8 @@ def main():
             writer.writerow(["task_id", "sequence_name", "physics", "replicate", "seed", "length", "sequence"])
             for i, name in enumerate(names, 1):
                 writer.writerow([i, "test", name, 1, 42, len(sequence), sequence])
+        with contextlib.redirect_stdout(io.StringIO()):
+            write_manifest(run_dir, {"sequences_csv": "(check)"}, {"test": sequence}, {"test": 0}, sets)
         # all of them as one job, as ./noodle launch groups short tasks
         tasks = read_tasks(run_dir)
         write_jobs(run_dir, [[task["task_id"] for task in tasks]], tasks, {})
@@ -216,18 +219,26 @@ def main():
                       positions[:, :, 2].min() > geometry["z_wall"] and positions[:, :, 2].max() < geometry["z_ceiling"])
 
         print("Analysis of those simulations")
+        check("each task was analysed by the job right after it finished",
+              all(states[task["task_id"]].get("analysed_at") for task in tasks))
         with contextlib.redirect_stdout(io.StringIO()):
             analyze(run_dir)
-        summary = {row["physics"]: row for _, row in
-                   pd.read_csv(run_dir / "analysis" / "summary.csv").iterrows()}
-        check("one summary row per simulation, Rg of every chain between 0.5 and 5 nm",
-              set(summary) == set(names) and all(0.5 < row["rg"] < 5 for row in summary.values()))
+        manifest = {row["physics"]: row for row in read_csv(run_dir / "manifest.csv")}
+        check("one manifest row per simulation, Rg of every chain between 0.5 and 5 nm",
+              set(manifest) == set(names) and all(0.5 < (row["rg_nm"] or 0) < 5 for row in manifest.values()))
+        check("heights only for grafted chains, brush columns only for brushes",
+              all((row["com_height_nm"] is None) == (row["geometry"] == "bulk")
+                  and (row["brush_height_nm"] is None) == (row["chains"] == 1) for row in manifest.values()))
+        profiles = pd.read_csv(run_dir / "analysis" / "profiles.csv")
         for name in ("brush", "brush_dense_C_terminus"):
             chains, width = brush_size(sets[name])
-            profile = pd.read_csv(run_dir / "analysis" / "profiles" / name / "test.csv.gz")
-            residues = profile["density"].sum() * PROFILE_BIN * width**2
+            density = profiles[(profiles["physics"] == name) & (profiles["profile"] == "density")]
+            residues = density["value"].sum() * PROFILE_BIN * width**2
             check(f"{name}: the density profile holds all {chains} x {len(sequence)} residues ({residues:.1f})",
-                  abs(residues / (chains * len(sequence)) - 1) < 1e-3)  # the files keep 5 digits
+                  abs(residues / (chains * len(sequence)) - 1) < 1e-3)  # the files keep 6 digits
+        check("brush: reduced density = grafting density x pi <Rg^2> of the free chain",
+              math.isclose(manifest["brush"]["reduced_density"],
+                           sets["brush"]["grafting_density"] * math.pi * manifest["bulk"]["rg_sq_nm2"], rel_tol=1e-4))
 
     print()
     if failures:

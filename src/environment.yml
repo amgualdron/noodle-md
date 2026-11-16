@@ -9,5 +9,6 @@ dependencies:
   - gsd
   - numpy
   - pyyaml
-  - pandas        # ./noodle analyze only
-  - mdanalysis    # ./noodle analyze only
+  - scipy         # observables.py: contacts between the chains of a brush
+  - pandas        # ./noodle analyze
+  - mdanalysis    # not used by noodle-md itself: there for your own analysis of the trajectories
