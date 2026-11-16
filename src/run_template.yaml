@@ -3,11 +3,11 @@
 #
 #   1. Pick a sequence set below (or put your own CSV in runs/RUN_NAME/).
 #   2. Fill in the settings below.
-#   3. Start it:            ./noodle launch RUN_NAME
-#   4. Check on it:         ./noodle status RUN_NAME
+#   3. Start it:            noodle launch RUN_NAME    (or the run's number, or nothing
+#   4. Check on it:         noodle status RUN_NAME     when you are in this folder)
 # ─────────────────────────────────────────────────────────────────────────────
 
-description: ""                 # one line: what is this run for? (shown by ./noodle status)
+description: ""                 # one line: what is this run for? (shown by noodle status)
 
 # ── Sequences ─────────────────────────────────────────────────────────────────
 # A CSV file in this run folder, or one of the shared sets in sequences/ by its name.
@@ -37,8 +37,9 @@ replicates: 1                   # independent copies (different random seeds) of
                                 #   protein under each physics set
 
 # ── Cluster (ignored when running on your own computer) ───────────────────────
-time_limit_days: 3              # time limit per task, in days (decimals are fine: 0.5 = 12 hours).
-                                #   A task that runs out of time keeps its progress:
-                                #   ./noodle launch again resumes it from its last hourly checkpoint.
-max_running: 0                  # most tasks running at the same time (0 = no limit)
+time_limit_days: 3              # time limit per SLURM job, in days (decimals are fine: 0.5 = 12 hours).
+                                #   Short tasks share a job of up to ~4 h; a longer task gets
+                                #   its own. A task that runs out of time saves a checkpoint
+                                #   first: ./noodle launch again resumes it from there.
+max_running: 0                  # most jobs (= cores) running at the same time (0 = no limit)
 extra_sbatch: []                # anything else your cluster needs, e.g. ["--partition=normal"]

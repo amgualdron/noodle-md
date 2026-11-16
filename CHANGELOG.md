@@ -69,6 +69,12 @@ with a different run layout: finish them with the version that launched them
 
 ### Changed
 - Run names can't be only digits (those are run numbers now).
+- README rewritten for all of the above: the `noodle` alias and Tab completion, run
+  numbers, jobs, `log.csv`, cancel, export, and every column of the results tables with
+  its definition and caveats (model times, Kirkwood Rh, provisional brush run length,
+  kappa > 1). `src/run_template.yaml` explains the per-job time limit.
+- `./noodle check` runs its test simulations as one job and checks the new tables
+  (in-job analysis, manifest columns per geometry, brush density profiles, reduced density).
 - **`./noodle analyze` pools instead of recomputing**: it gathers the job files into
   `analysis/replicates.csv` (one row per task), `analysis/profiles.csv` (each profile
   averaged over replicates, with `err`) and `analysis/report.json` (counts, the range of

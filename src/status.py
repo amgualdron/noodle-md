@@ -222,9 +222,8 @@ def build_report(run_dir, settings, rows, speeds, color, limit):
     # ── Waiting and not launched: just how many ──
     if counts["waiting"]:
         resuming = sum(r["percent"] is not None for r in by_state["waiting"])
-        report.heading("waiting", counts["waiting"], "in the SLURM queue" +
-                       (f" (some in jobs that are running other tasks first; {resuming} will resume "
-                        "from a checkpoint)" if resuming else " (some in jobs that are running other tasks first)"))
+        report.heading("waiting", counts["waiting"], "in the SLURM queue, or next in a job that is running"
+                       + (f" ({resuming} will resume from a checkpoint)" if resuming else ""))
     if counts["not launched"]:
         report.heading("not launched", counts["not launched"], f"./noodle launch {name} starts them")
 
