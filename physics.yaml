@@ -90,8 +90,8 @@ brush:
   extends: grafted
   description: "10 x 10 brush of N-terminally grafted chains, 0.05 chains/nm^2, neutral repulsive surface"
   grafting_density: 0.05              # one chain per 20 nm^2: grafting points ~4.5 nm apart
-  # PROVISIONAL run length, until the brush calibration experiment (./noodle calibrate,
-  # README section 3) measures how long 10 x 10 brushes take to equilibrate and relax.
+  # PROVISIONAL run length, until it is measured how long 10 x 10 brushes take to
+  # equilibrate and relax (check the drift and independent_samples columns of the manifest).
   # Every frame averages over all 100 chains, so a brush needs a shorter production than
   # a single chain for the same statistics. Relaxation times measured earlier on 4 x 4
   # brushes (~0.01-0.04 x N^2.2 up to 0.1 chains/nm^2) give this ~40-150 relaxation times

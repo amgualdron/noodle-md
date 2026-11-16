@@ -174,8 +174,8 @@ def read_sequences(run_dir, settings):
 
 def physics_sets(run_dir):
     """Every physics set a run can use: those of physics.yaml, plus any the run folder
-    defines for itself in physics_sets.yaml (same format; they may extend the shared sets).
-    ./noodle calibrate writes one, so an experiment's sets don't crowd physics.yaml."""
+    defines for itself in physics_sets.yaml (same format; they may extend the shared sets),
+    so sets that only one run needs don't crowd physics.yaml."""
     all_sets = yaml.safe_load((ROOT / "physics.yaml").read_text())
     own = run_dir / "physics_sets.yaml"
     if own.exists():
