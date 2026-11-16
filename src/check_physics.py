@@ -8,7 +8,6 @@ Prints PASS/FAIL per check and exits with an error if anything failed.
 import contextlib
 import csv
 import io
-import json
 import math
 import subprocess
 import sys
@@ -24,8 +23,9 @@ import yaml
 from analyze_run import PROFILE_BIN, analyze
 from forcefield import (AA_PARAMS, AMINO_ACIDS, debye_huckel, residue_pair_forces, thermal_energy,
                         wall_contact_distance, wall_forces)
-from launch_run import resolve_physics
-from runs import ROOT, brush_size
+from launch_run import resolve_physics, write_jobs
+from runs import ROOT, brush_size, read_tasks, task_states, trajectory_path
+from simulate import system_geometry
 
 ALL_SETS = yaml.safe_load((ROOT / "physics.yaml").read_text())
 failures = []
@@ -175,8 +175,6 @@ def main():
     print("Short simulations (bulk; grafted with attraction and charge; grafted_charged; brushes)")
     with tempfile.TemporaryDirectory() as tmp:
         run_dir = Path(tmp)
-        (run_dir / "logs").mkdir()
-        (run_dir / "trajectories").mkdir()
         sets = {"bulk": resolve_physics(ALL_SETS, "test_bulk"),
                 "grafted": dict(resolve_physics(ALL_SETS, "test_grafted"),
                                 wall_attraction=0.3, wall_charge_density=-0.05)}
@@ -193,19 +191,24 @@ def main():
             writer.writerow(["task_id", "sequence_name", "physics", "replicate", "seed", "length", "sequence"])
             for i, name in enumerate(names, 1):
                 writer.writerow([i, "test", name, 1, 42, len(sequence), sequence])
-        for i, name in enumerate(names, 1):
-            result = subprocess.run([sys.executable, str(ROOT / "src" / "simulate.py"), str(run_dir), str(i)],
-                                    capture_output=True, text=True)
-            log = json.loads((run_dir / "logs" / f"task_{i:04d}.json").read_text())
-            check(f"{name}: task completes", result.returncode == 0 and log["status"] == "completed")
-            if result.returncode != 0:
-                print(result.stderr[-2000:])
+        # all of them as one job, as ./noodle launch groups short tasks
+        tasks = read_tasks(run_dir)
+        write_jobs(run_dir, [[task["task_id"] for task in tasks]], tasks, {})
+        result = subprocess.run([sys.executable, str(ROOT / "src" / "simulate.py"), str(run_dir), "1"],
+                                capture_output=True, text=True)
+        check("one job runs every task", result.returncode == 0)
+        states = task_states(run_dir)
+        for task in tasks:
+            name, log = task["physics"], states[task["task_id"]]
+            check(f"{name}: task completes", log["status"] == "completed")
+            if log["status"] != "completed":
+                print(result.stdout[-3000:], result.stderr[-2000:])
                 continue
-            with gsd.hoomd.open(run_dir / log["trajectory"]) as traj:
+            with gsd.hoomd.open(trajectory_path(run_dir, task)) as traj:
                 positions = np.array([frame.particles.position for frame in traj])
             check(f"{name}: {len(positions)} frames, all positions finite", np.isfinite(positions).all())
             if name.startswith(("grafted", "brush")):
-                geometry = log["geometry"]
+                geometry = system_geometry(sequence, sets[name])
                 anchors = positions[:, geometry["anchors"], :]
                 check(f"{name}: {geometry['chains']} chain(s) of {len(sequence)} residues, anchors never moved",
                       positions.shape[1] == geometry["chains"] * len(sequence) and np.all(anchors == anchors[0]))

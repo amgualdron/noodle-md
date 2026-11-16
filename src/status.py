@@ -2,13 +2,14 @@
 
 With no name, it lists every run with how far along it is.
 
-The report is printed and also saved as runs/<run name>/status.txt. On screen each list
-shows at most SHOW_ON_SCREEN tasks; status.txt always has all of them.
+The report is printed, each list showing at most SHOW_ON_SCREEN tasks. Every task, with
+its state, progress, job and error, is also written to runs/<run name>/log.csv (open it
+in a spreadsheet to sort and filter).
 
 A task's state comes from two places:
-    its log (logs/task_0001.json)  how far it got, written by the task itself
-    the SLURM queue                whether it is waiting or running right now
-On a computer without SLURM, a task counts as running if its log was updated recently
+    its row in its job file (jobs/job_0007.csv)  how far it got, written by the job itself
+    the SLURM queue                              whether its job is waiting or running now
+On a computer without SLURM, a task counts as running if its row was updated recently
 (a running task updates it at least once an hour).
 """
 
@@ -19,10 +20,10 @@ from datetime import datetime
 
 import yaml
 
-from runs import (RUNS, about, compress, duration, read_log, read_submissions, read_tasks,
-                  run_from_command_line, run_lengths, slurm_queue)
+from runs import (RUNS, about, compress, duration, measured_speeds, read_submissions, read_tasks,
+                  run_from_command_line, seconds_left, slurm_queue, task_states, write_csv)
 
-SHOW_ON_SCREEN = 10  # tasks per list on screen (status.txt lists them all)
+SHOW_ON_SCREEN = 10  # tasks per list on screen (log.csv lists them all)
 LIST_DONE_UP_TO = 20  # runs with this many tasks or fewer also list every finished task
 STALE_HOURS = 1.5     # a running task that has not reported for this long is stuck or gone
 
@@ -42,84 +43,55 @@ def task_state(log, slurm_job, queue):
         percent  how far it got (None if it never started)
         silent   hours since it last reported, if a running task is overdue (else None)
 
-    log        the task's log ({} if it has never started)
-    slurm_job  the SLURM job id it was last submitted as (None if never submitted)
-    queue      {job id: SLURM state} on a cluster; None on a computer without SLURM
+    log        the task's current row from its job file ({} if it was never in a job)
+    slurm_job  the SLURM id of that job (None if it was never submitted)
+    queue      {SLURM id: SLURM state} on a cluster; None on a computer without SLURM
     """
     info = dict(state=None, percent=None, silent=None)
     if log.get("total_steps"):
-        info["percent"] = 100 * log["step"] / log["total_steps"]
+        info["percent"] = 100 * (log.get("step") or 0) / log["total_steps"]
+    status = log.get("status")
+    in_queue = queue is not None and slurm_job in queue
 
-    if log.get("status") == "completed":
+    if status == "completed":
         return dict(info, state="done", percent=100)
-
-    slurm_state = queue.get(slurm_job) if queue else None  # None: not in the queue (any more)
-    if slurm_state == "PENDING":
-        return dict(info, state="waiting")
-    if log.get("status") == "failed" and slurm_state is None:
+    if status == "failed":
         return dict(info, state="failed")
-    if log.get("status") == "stopped" and slurm_state is None:
+    if not log:
+        return dict(info, state="not launched")
+    if status == "submitted":
+        # its job is waiting, or is running the tasks before it; else the job ended first
+        return dict(info, state="waiting" if in_queue else "stopped")
+    if status == "stopped":
         return dict(info, state="stopped")  # it stopped itself (time limit, scancel, Ctrl-C)
 
+    # status running: is it really?
     if queue is None:  # own computer: has it reported recently?
-        if not log:
-            return dict(info, state="not launched")
         alive = hours_since(log["last_update"]) < STALE_HOURS
     else:              # cluster: is its job still in the queue?
-        if not log and slurm_job is None:
-            return dict(info, state="not launched")
-        alive = slurm_state is not None
-        if alive and log and hours_since(log["last_update"]) > STALE_HOURS:
+        alive = in_queue
+        if alive and hours_since(log["last_update"]) > STALE_HOURS:
             info["silent"] = hours_since(log["last_update"])  # in the queue but not reporting
-
     return dict(info, state="running" if alive else "stopped")
-
-
-# ── Time left, from speeds measured in this run ────────────────────────────────
-def measured_speeds(rows):
-    """[(physics set, N, steps per second)] for every task of this run that has measured
-    its speed on the machine it ran on: finished tasks (all their steps over all their run
-    time) and started ones (their latest hourly measurement)."""
-    speeds = []
-    for r in rows:
-        log = r["log"]
-        if r["state"] == "done" and log.get("run_time_s") and log.get("total_steps"):
-            speed = log["total_steps"] / log["run_time_s"]
-        elif log.get("steps_per_second"):
-            speed = log["steps_per_second"]
-        else:
-            continue
-        speeds.append((r["task"]["physics"], int(r["task"]["length"]), speed))
-    return speeds
 
 
 def add_time_left(rows, physics, speeds):
     """Give every unfinished, not failed task r["left"]: the run time it still needs, in
-    seconds. It uses the task's own measured speed, or else that of the measured task
-    closest in length (in the same physics set if there is one). None until some task of
-    the run has measured its speed."""
+    seconds (runs.seconds_left). None until some task of the run has measured its speed."""
     for r in rows:
         r["left"] = None
-        if r["state"] in ("done", "failed") or not speeds:
-            continue
-        task, log = r["task"], r["log"]
-        n = int(task["length"])
-        total = log.get("total_steps") or sum(run_lengths(physics[task["physics"]], n)[:2])
-        speed = log.get("steps_per_second")
-        if not speed:
-            similar = [s for s in speeds if s[0] == task["physics"]] or speeds
-            speed = min(similar, key=lambda s: abs(s[1] - n))[2]
-        r["left"] = (total - log.get("step", 0)) / speed
+        if r["state"] not in ("done", "failed") and speeds:
+            r["left"] = seconds_left(r["task"], r["log"], physics[r["task"]["physics"]], speeds)
 
 
 # ── The report ────────────────────────────────────────────────────────────────
 class Report:
-    """Builds the report's lines, in color for the screen or plain for status.txt."""
+    """Builds the report's lines, in color for the screen (or plain, when printed into a file)."""
 
     def __init__(self, rows, color, limit):
         self.lines, self.color, self.limit = [], color, limit
         tasks = [r["task"] for r in rows]
-        self.id_width = max(len(t["task_id"]) for t in tasks)
+        self.id_width = max(len(str(t["task_id"])) for t in tasks)
         self.name_width = min(24, max(len(t["sequence_name"]) for t in tasks))
         self.physics_width = max(len(t["physics"]) for t in tasks)
 
@@ -144,7 +116,7 @@ class Report:
         for r in shown:
             self.task(r, details(r))
         if len(rows) > len(shown):
-            self.add(self.paint(f"  … and {len(rows) - len(shown)} more (all are listed in status.txt)", "dim"))
+            self.add(self.paint(f"  … and {len(rows) - len(shown)} more (all are listed in log.csv)", "dim"))
 
     def heading(self, state, count, text=""):
         self.add("", self.paint(f"{state.upper()} {count}", state) + (f"  {text}" if text else ""))
@@ -208,20 +180,23 @@ def build_report(run_dir, settings, rows, speeds, color, limit):
 
     # ── Failed: grouped by error, since one cause often fails many tasks ──
     if counts["failed"]:
-        report.heading("failed", counts["failed"], f"fix the cause first · full messages in runs/{name}/slurm/")
+        report.heading("failed", counts["failed"], f"fix the cause first · full messages in runs/{name}/jobs/job_<number>.out")
         by_error = defaultdict(list)
         for r in by_state["failed"]:
-            by_error[r["log"].get("error", "(no error recorded)")].append(int(r["task"]["task_id"]))
+            by_error[r["log"].get("error") or "(no error recorded)"].append(r["task"]["task_id"])
         groups = sorted(by_error.items(), key=lambda g: -len(g[1]))
         for error, ids in groups if limit is None else groups[:limit]:
-            report.add(f"  {len(ids)} × {error}", report.paint(f"      task{'s' * (len(ids) > 1)} {compress(sorted(ids)).replace(',', ', ')}", "dim"))
+            jobs = sorted({r["log"]["job"] for r in by_state["failed"] if r["task"]["task_id"] in ids})
+            report.add(f"  {len(ids)} × {error}",
+                       report.paint(f"      task{'s' * (len(ids) > 1)} {compress(sorted(ids)).replace(',', ', ')}"
+                                    f"  (job{'s' * (len(jobs) > 1)} {compress(jobs).replace(',', ', ')})", "dim"))
         if limit is not None and len(groups) > limit:
-            report.add(report.paint(f"  … and {len(groups) - limit} other errors (all are listed in status.txt)", "dim"))
+            report.add(report.paint(f"  … and {len(groups) - limit} other errors (all are listed in log.csv)", "dim"))
 
     # ── Stopped ──
     if counts["stopped"]:
         report.heading("stopped", counts["stopped"], f"./noodle launch {name} resumes them from their last checkpoint")
-        report.tasks(by_state["stopped"], lambda r: "never started (see the slurm/ folder)" if r["percent"] is None else
+        report.tasks(by_state["stopped"], lambda r: "not started yet" if r["percent"] is None else
                      f"stopped at {r['percent']:3.0f}% after {duration(r['log'].get('run_time_s', 0))} of run time"
                      + (f" ({r['log']['stop_reason']})" if r["log"].get("stop_reason") else "")
                      + (f", needs {about(r['left'])} more" if r["left"] is not None else ""))
@@ -246,7 +221,8 @@ def build_report(run_dir, settings, rows, speeds, color, limit):
     if counts["waiting"]:
         resuming = sum(r["percent"] is not None for r in by_state["waiting"])
         report.heading("waiting", counts["waiting"], "in the SLURM queue" +
-                       (f" ({resuming} will resume from a checkpoint)" if resuming else ""))
+                       (f" (some in jobs that are running other tasks first; {resuming} will resume "
+                        "from a checkpoint)" if resuming else " (some in jobs that are running other tasks first)"))
     if counts["not launched"]:
         report.heading("not launched", counts["not launched"], f"./noodle launch {name} starts them")
 
@@ -280,6 +256,29 @@ def build_report(run_dir, settings, rows, speeds, color, limit):
     return report.lines
 
 
+# ── log.csv: every task, as a table ───────────────────────────────────────────
+LOG_COLUMNS = ["task_id", "sequence_name", "physics", "replicate", "N", "state", "percent", "phase", "job",
+               "slurm_job", "steps_per_second", "run_time_h", "time_left_h", "attempts", "host", "started_at",
+               "last_update", "completed_at", "stop_reason", "error"]
+
+
+def write_log_csv(run_dir, rows, submitted):
+    table = []
+    for r in rows:
+        task, log = r["task"], r["log"]
+        table.append(dict(
+            task_id=task["task_id"], sequence_name=task["sequence_name"], physics=task["physics"],
+            replicate=task["replicate"], N=task["length"], state=r["state"],
+            percent=None if r["percent"] is None else round(r["percent"], 1), phase=log.get("phase"),
+            job=log.get("job"), slurm_job=submitted.get(log.get("job")), steps_per_second=log.get("steps_per_second"),
+            run_time_h=round(log["run_time_s"] / 3600, 3) if log.get("run_time_s") else None,
+            time_left_h=round(r["left"] / 3600, 3) if r["left"] is not None else None,
+            attempts=log.get("attempts"), host=log.get("host"), started_at=log.get("started_at"),
+            last_update=log.get("last_update"), completed_at=log.get("completed_at"),
+            stop_reason=log.get("stop_reason"), error=log.get("error")))
+    write_csv(table, run_dir / "log.csv", LOG_COLUMNS)
+
+
 # ── Every run at a glance ─────────────────────────────────────────────────────
 def list_all_runs():
     runs = sorted(p for p in RUNS.glob("*") if (p / "run.yaml").exists()) if RUNS.exists() else []
@@ -291,7 +290,7 @@ def list_all_runs():
         settings = yaml.safe_load((run_dir / "run.yaml").read_text()) or {}
         if (run_dir / "tasks.csv").exists():
             tasks = read_tasks(run_dir)
-            statuses = Counter(read_log(run_dir, t["task_id"]).get("status") for t in tasks)
+            statuses = Counter(state["status"] for state in task_states(run_dir).values())
             state = f"{statuses['completed']} of {len(tasks)} done"
             if statuses["failed"]:
                 state += f", {statuses['failed']} failed"
@@ -313,16 +312,18 @@ def main():
 
     queue = slurm_queue(run_dir.name)
     submitted = read_submissions(run_dir)
+    states = task_states(run_dir)
+    tasks = read_tasks(run_dir)
     rows = []
-    for task in read_tasks(run_dir):
-        log = read_log(run_dir, task["task_id"])
-        rows.append(dict(task=task, log=log, **task_state(log, submitted.get(int(task["task_id"])), queue)))
-    speeds = measured_speeds(rows)
+    for task in tasks:
+        log = states.get(task["task_id"], {})
+        rows.append(dict(task=task, log=log, **task_state(log, submitted.get(log.get("job")), queue)))
+    speeds = measured_speeds(tasks, states)
     add_time_left(rows, yaml.safe_load((run_dir / "physics.yaml").read_text()), speeds)
 
     color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
     print("\n".join(build_report(run_dir, settings, rows, speeds, color, SHOW_ON_SCREEN)))
-    (run_dir / "status.txt").write_text("\n".join(build_report(run_dir, settings, rows, speeds, False, None)) + "\n")
+    write_log_csv(run_dir, rows, submitted)
 
 
 if __name__ == "__main__":

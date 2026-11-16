@@ -33,7 +33,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from runs import brush_size, read_log, read_tasks, run_from_command_line
+from runs import brush_size, read_tasks, run_from_command_line, task_states, trajectory_path
 
 BLOCKS = 10  # a lone replicate's frames are cut into this many blocks to estimate its error bar
 OBSERVABLES = ["rg", "rg_sq", "ree_sq", "asphericity", "ree_z", "com_height"]
@@ -222,9 +222,12 @@ def analyze(run_dir):
     """Add every completed replicate not yet in its protein's table, then rebuild the summary.
 
     Returns the ids of every task whose frames are in a table."""
+    from simulate import system_geometry  # imports HOOMD
+
     tasks = pd.DataFrame(read_tasks(run_dir))
     physics = yaml.safe_load((run_dir / "physics.yaml").read_text())
-    logs = {int(i): read_log(run_dir, i) for i in tasks["task_id"]}
+    states = task_states(run_dir)
+    logs = {i: states.get(i, {}) for i in tasks["task_id"]}
     completed = sum(log.get("status") == "completed" for log in logs.values())
 
     analysed, summary, new, missing, errors = set(), [], 0, [], []
@@ -242,12 +245,13 @@ def analyze(run_dir):
                 continue
             if log.get("status") != "completed":
                 continue
-            trajectory = run_dir / log["trajectory"]
+            trajectory = trajectory_path(run_dir, task)
             if not trajectory.exists():
                 missing.append(task_id)
                 continue
             try:
-                frames, profile = trajectory_metrics(trajectory, log.get("chains", 1), log["geometry"].get("z_wall"))
+                geometry = system_geometry(task["sequence"], physics[physics_name])
+                frames, profile = trajectory_metrics(trajectory, geometry.get("chains", 1), geometry.get("z_wall"))
                 if frames["frame"].nunique() != log["frames"]:
                     raise ValueError(f"{frames['frame'].nunique()} frames in the file, the log says {log['frames']}")
             except Exception as error:

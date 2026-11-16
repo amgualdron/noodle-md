@@ -21,6 +21,26 @@ with a different run layout: finish them with the version that launched them
   few charges.
 
 ### Changed
+- **Tasks are grouped into jobs.** A job is one SLURM array element (one core) that runs
+  its tasks one after another. `./noodle launch` packs short tasks into jobs of up to
+  ~4 h (estimated; at most half of `time_limit_days`), longest first ("first fit
+  decreasing"); a longer task gets a job of its own. The longest jobs get the lowest
+  numbers, so they start first. A failed task doesn't stop its job. Thousands of
+  minute-long tasks now make a few hundred jobs instead of thousands, and HOOMD is loaded
+  once per job. `max_running` now counts jobs (one core each). Launching looks the same;
+  the plan's Cluster line says how many jobs.
+- **New bookkeeping layout** (fewer files): `logs/` (one JSON per task) and `slurm/` (one
+  output file per task) are replaced by `jobs/`:
+  - `jobs/job_0007.csv`: the tasks of job 7 and how each is going (status, phase, step,
+    speed, run time, attempts, host, dates, error), written by launch just before the job
+    is submitted, then only by the job itself. A task's current state is its row in the
+    newest job file that lists it (a resumed or retried task gets a row in a new job).
+  - `jobs/job_0007.out`: everything job 7 printed (all of its tasks).
+  - `jobs/submitted.csv`: which SLURM job runs which job.
+  - `jobs/slurm.out`: SLURM's own messages (normally empty).
+- `./noodle status` writes `log.csv` (one row per task: state, progress, job, SLURM id,
+  speed, run time, time left, attempts, host, dates, error) instead of `status.txt`.
+  Tasks waiting in a job that is still running other tasks count as waiting.
 - A task that is about to hit the cluster time limit stops cleanly: SLURM warns it 10
   minutes ahead (`#SBATCH --signal=B:USR1@600` in `src/slurm_job.sh`), and the task saves
   a checkpoint and records `stopped (time limit)`. Nothing is lost (before: up to an

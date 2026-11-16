@@ -1,19 +1,24 @@
-"""Run one task of a run: build the chain (or brush), equilibrate it, then record a trajectory.
+"""Run one job of a run: its tasks one after another. Each task builds its chain (or brush),
+equilibrates it, then records a trajectory.
 
-    env/bin/python src/simulate.py runs/<run name> <task id>
+    env/bin/python src/simulate.py runs/<run name> <job number>
 
-You normally never call this yourself: ./noodle launch does it, once per task.
+You normally never call this yourself: ./noodle launch does it (through SLURM, or right
+here on your own computer), once per job.
 
-Everything a task needs comes from its run folder:
-    tasks.csv      which sequence, physics set and random seed this task uses
-    physics.yaml   the physics settings, frozen when the run was launched
+Everything a job needs comes from its run folder:
+    jobs/job_0007.csv  which tasks this job runs, in order (written by ./noodle launch)
+    tasks.csv          each task's sequence, physics set and random seed
+    physics.yaml       the physics settings, frozen when the run was launched
 and everything it produces goes back there:
-    logs/task_0001.json               status and progress (read by ./noodle status)
-    trajectories/task_0001_<name>.gsd production frames
-    checkpoints/task_0001.gsd         full state saved every hour, deleted when done
+    jobs/job_0007.csv                  each task's state and progress, updated as it goes
+                                       (read by ./noodle status)
+    trajectories/task_0001_<name>.gsd  a task's production frames
+    checkpoints/task_0001.gsd          a task's full state, saved every hour and when it is
+                                       asked to stop; deleted when the task is done
 
-If a task is stopped (e.g. it ran out of cluster time), running it again resumes
-from its last checkpoint instead of starting over.
+A task that failed is recorded as failed and the job goes on with the next one. A task
+that was stopped resumes from its last checkpoint the next time it runs.
 
 HOOMD in brief: a `hoomd.Simulation` holds the `state` (box, particles, bonds) and the
 `operations`: an integrator that moves the particles under the forces from
@@ -25,6 +30,7 @@ import signal
 import socket
 import sys
 import time
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -37,24 +43,25 @@ import yaml
 
 from forcefield import (AA_PARAMS, AMINO_ACIDS, residue_pair_forces, thermal_energy,
                         wall_contact_distance, wall_forces)
-from runs import brush_size, read_log, read_tasks, run_lengths, update_log
+from runs import (brush_size, checkpoint_path, read_job, read_tasks, run_lengths, trajectory_path,
+                  write_job)
 
 REPORT_EVERY_HOURS = 1     # how often to print progress, update the log and save a checkpoint
 FIRST_REPORT_SECONDS = 60  # one early report, so you can see the speed right away
 CHUNK_SECONDS = 60         # the simulation runs in chunks of about this long; between chunks it
                            # checks the clock and whether it was asked to stop (not a physics setting)
 FIRST_CHUNK_STEPS = 1000   # the first chunk, before the speed is known (and the smallest chunk)
-STOPPED_EXIT_CODE = 3      # exit code of a task that stopped because it was asked to
+STOPPED_EXIT_CODE = 3      # exit code of a job that stopped because it was asked to
 
 
 # ── Stopping cleanly ──────────────────────────────────────────────────────────
-# A task can be asked to stop by a signal:
+# A job can be asked to stop by a signal:
 #   SIGUSR1  SLURM, 10 minutes before the time limit (#SBATCH --signal in slurm_job.sh)
 #   SIGTERM  scancel (./noodle cancel)
 #   SIGINT   Ctrl-C, when running on your own computer
 # HOOMD can't be interrupted in the middle of sim.run(), so the signal only notes the
-# request here; after the current chunk (about CHUNK_SECONDS) the task saves a
-# checkpoint and stops, losing nothing. ./noodle launch resumes it from there.
+# request here; after the current chunk (about CHUNK_SECONDS) the running task saves a
+# checkpoint and the job stops, losing nothing. ./noodle launch resumes it from there.
 STOP_REASONS = {signal.SIGUSR1: "time limit", signal.SIGTERM: "cancelled", signal.SIGINT: "Ctrl-C"}
 stop_requests = []  # the reasons received so far
 
@@ -66,10 +73,6 @@ def request_stop(signal_number, frame):
     stop_requests.append(reason)
     print(f"\n[{now()}] Asked to stop ({reason}): saving a checkpoint after the current chunk"
           + (" (Ctrl-C again to quit right away)" if reason == "Ctrl-C" else ""), flush=True)
-
-
-for _signal in STOP_REASONS:
-    signal.signal(_signal, request_stop)
 
 
 # ── Geometry and starting configuration ───────────────────────────────────────
@@ -248,23 +251,16 @@ def now():
     return datetime.now().isoformat(timespec="seconds")
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
-def main():
-    run_dir, task_id = Path(sys.argv[1]), int(sys.argv[2])
-    task = {int(t["task_id"]): t for t in read_tasks(run_dir)}[task_id]
-    physics = yaml.safe_load((run_dir / "physics.yaml").read_text())[task["physics"]]
-    name, sequence, seed = task["sequence_name"], task["sequence"], int(task["seed"])
+# ── One task ──────────────────────────────────────────────────────────────────
+def run_task(run_dir, task, physics, row, update):
+    """Run one task to the end, or until the job is asked to stop.
 
-    stem = f"task_{task_id:04d}"
-    trajectory = run_dir / "trajectories" / f"{stem}_{name}.gsd"
-    checkpoint = run_dir / "checkpoints" / f"{stem}.gsd"
+    row: the task's row in the job file; update(row, field=value, ...) changes it and
+    writes the job file. Returns "completed" or "stopped"; an error is raised."""
+    task_id, name, sequence, seed = task["task_id"], task["sequence_name"], task["sequence"], task["seed"]
+    trajectory, checkpoint = trajectory_path(run_dir, task), checkpoint_path(run_dir, task_id)
     trajectory.parent.mkdir(exist_ok=True)
     checkpoint.parent.mkdir(exist_ok=True)
-
-    log = read_log(run_dir, task_id)
-    if log.get("status") == "completed":
-        print(f"Task {task_id} ({name}) is already completed.")
-        return
 
     equilibration, production, save_every = run_lengths(physics, len(sequence))
     total = equilibration + production
@@ -288,24 +284,20 @@ def main():
                              trigger=hoomd.trigger.Periodic(save_every, phase=equilibration % save_every))
 
     chains = geometry.get("chains", 1)
-    update_log(
-        run_dir, task_id, status="running", stop_reason=None, sequence_name=name, n_residues=len(sequence),
-        chains=chains, physics=task["physics"], geometry=geometry, seed=seed,
-        equilibration_steps=equilibration, production_steps=production, total_steps=total,
-        step=sim.timestep, trajectory=str(trajectory.relative_to(run_dir)),
-        started_at=log.get("started_at", now()), attempts=log.get("attempts", 0) + 1,
-        host=socket.gethostname(), hoomd_version=hoomd.version.version, last_update=now(),
-    )
+    phase = "equilibration" if sim.timestep < equilibration else "production"
+    update(row, status="running", phase=phase, N=len(sequence), chains=chains, step=sim.timestep,
+           total_steps=total, attempts=(row.get("attempts") or 0) + 1, host=socket.gethostname(),
+           started_at=row.get("started_at") or now(), last_update=now(), stop_reason=None, error=None)
     brush = (f" x {chains} chains (brush, {physics['grafting_density']:g} chains/nm^2, "
              f"box {geometry['box'][0]:.1f} nm wide)" if chains > 1 else "")
     print(f"Task {task_id}: {name}, {len(sequence)} residues{brush}, physics '{task['physics']}' "
           f"({physics['geometry']}), seed {seed}")
     print(f"  {equilibration:,} equilibration + {production:,} production steps, "
-          f"a frame every {save_every:,} steps -> {trajectory}", flush=True)
+          f"a frame every {save_every:,} steps -> {trajectory.relative_to(run_dir)}", flush=True)
 
     # ── Run, saving progress every REPORT_EVERY_HOURS ──
     # time.monotonic() is a stopwatch: unlike the wall clock it never jumps
-    previous_run_time = log.get("run_time_s", 0)  # from earlier attempts of this task
+    previous_run_time = row.get("run_time_s") or 0  # from earlier attempts of this task
     session_start = time.monotonic()
     last_report_time, last_report_step = session_start, sim.timestep
     next_report_time = session_start + FIRST_REPORT_SECONDS
@@ -328,23 +320,21 @@ def main():
             clock = time.monotonic()
             speed = (sim.timestep - last_report_step) / (clock - last_report_time)
             phase = "equilibration" if sim.timestep < equilibration else "production"
-            update_log(run_dir, task_id, step=sim.timestep, phase=phase,
-                       steps_per_second=round(speed, 1),
-                       run_time_s=round(previous_run_time + clock - session_start),
-                       last_update=now())
+            update(row, step=sim.timestep, phase=phase, steps_per_second=round(speed, 1),
+                   run_time_s=round(previous_run_time + clock - session_start), last_update=now())
             print(f"[{now()}] {phase:13s} {100 * sim.timestep / total:5.1f}%  "
                   f"{speed:,.0f} steps/s  ~{(total - sim.timestep) / speed / 3600:.1f} h left", flush=True)
             last_report_time, last_report_step = clock, sim.timestep
             next_report_time = clock + REPORT_EVERY_HOURS * 3600
     writer.flush()
+    run_time = round(previous_run_time + time.monotonic() - session_start)
 
     # ── Asked to stop: save everything, so ./noodle launch resumes from here ──
     if sim.timestep < total:
         save_checkpoint(sim, checkpoint)
-        run_time = round(previous_run_time + time.monotonic() - session_start)
         phase = "equilibration" if sim.timestep < equilibration else "production"
-        update_log(run_dir, task_id, status="stopped", stop_reason=stop_requests[0], step=sim.timestep,
-                   phase=phase, run_time_s=run_time, last_update=now())
+        update(row, status="stopped", stop_reason=stop_requests[0], step=sim.timestep, phase=phase,
+               run_time_s=run_time, last_update=now())
         print(f"Stopped ({stop_requests[0]}) at {100 * sim.timestep / total:.1f}%, checkpoint saved: "
               "./noodle launch resumes it from here")
         return "stopped"
@@ -352,20 +342,59 @@ def main():
     # ── Done ──
     with gsd.hoomd.open(trajectory, "r") as f:
         frames = len(f)
-    run_time = round(previous_run_time + time.monotonic() - session_start)
-    update_log(run_dir, task_id, status="completed", step=sim.timestep, phase="done", frames=frames,
-               run_time_s=run_time, completed_at=now(), last_update=now())
+    update(row, status="completed", phase="done", step=sim.timestep, frames=frames, run_time_s=run_time,
+           completed_at=now(), last_update=now())
     checkpoint.unlink(missing_ok=True)
     print(f"Done: {frames} frames in {run_time / 3600:.2f} h of run time")
+    return "completed"
+
+
+# ── The job: its tasks, one after another ─────────────────────────────────────
+def run_job(run_dir, job):
+    """Run every unfinished task of the job, in the order of its job file. Returns
+    "stopped" if the job was asked to stop, else "done"."""
+    tasks = {task["task_id"]: task for task in read_tasks(run_dir)}
+    physics = yaml.safe_load((run_dir / "physics.yaml").read_text())
+    rows = read_job(run_dir, job)
+
+    def update(row, **fields):
+        row.update(fields)
+        write_job(run_dir, job, rows)
+
+    print(f"Job {job}: {len(rows)} task(s) on {socket.gethostname()}, HOOMD {hoomd.version.version}, "
+          f"started {now()}", flush=True)
+    for n, row in enumerate(rows, 1):
+        if stop_requests:
+            break
+        if row["status"] == "completed":
+            continue
+        task = tasks[row["task_id"]]
+        print(f"\n── task {task['task_id']} ({n} of {len(rows)} in job {job}) ──", flush=True)
+        try:
+            if run_task(run_dir, task, physics[task["physics"]], row, update) == "stopped":
+                break
+        except KeyboardInterrupt:  # Ctrl-C twice: no checkpoint now, the last hourly one stays
+            update(row, status="stopped", stop_reason="Ctrl-C twice (resumes from the last hourly checkpoint)",
+                   last_update=now())
+            raise
+        except Exception as error:
+            # Recorded for ./noodle status and ./noodle launch; the full message is printed
+            # (into this job's .out file), and the job goes on with its next task.
+            traceback.print_exc()
+            update(row, status="failed", error=f"{type(error).__name__}: {error}", last_update=now())
+    return "stopped" if stop_requests else "done"
+
+
+def main():
+    for signal_number in STOP_REASONS:
+        signal.signal(signal_number, request_stop)
+    try:
+        result = run_job(Path(sys.argv[1]), int(sys.argv[2]))
+    except KeyboardInterrupt:
+        result = "stopped"
+    if result == "stopped":
+        sys.exit(STOPPED_EXIT_CODE)
 
 
 if __name__ == "__main__":
-    try:
-        if main() == "stopped":
-            sys.exit(STOPPED_EXIT_CODE)
-    except Exception as error:
-        # Record the error for ./noodle status and ./noodle launch, then stop with the full
-        # message (it ends up in the task's slurm/ output file, or on screen).
-        update_log(Path(sys.argv[1]), int(sys.argv[2]), status="failed",
-                   error=f"{type(error).__name__}: {error}", last_update=now())
-        raise
+    main()

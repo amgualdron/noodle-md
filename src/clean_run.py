@@ -11,15 +11,15 @@ once they are copied to long-term storage (the group NAS, by Globus) they can go
      checkpoint such a task left behind.
 
 Never deleted: unfinished tasks' trajectories and checkpoints (they are needed to
-resume them), and everything small: run.yaml, tasks.csv, physics.yaml, logs/, slurm/,
-analysis/, status.txt. It can be run again as more tasks finish.
+resume them), and everything small: run.yaml, tasks.csv, physics.yaml, manifest.csv,
+jobs/, log.csv, analysis/. It can be run again as more tasks finish.
 """
 
 import hashlib
 import sys
 
 from analyze_run import analyze
-from runs import file_size, read_log, read_tasks, run_from_command_line
+from runs import file_size, read_tasks, run_from_command_line, task_states, trajectory_path
 
 CHECKSUMS = "trajectories.sha256"  # in the run folder; lists names relative to trajectories/
 
@@ -65,9 +65,10 @@ def main():
     print()
 
     trajectories, leftovers, unfinished, unanalysed = [], [], [], []
+    states = task_states(run_dir)
     for task in read_tasks(run_dir):
-        task_id = int(task["task_id"])
-        log = read_log(run_dir, task_id)
+        task_id = task["task_id"]
+        log = states.get(task_id, {})
         stem = f"task_{task_id:04d}"
         own_files = [p for folder in ("trajectories", "checkpoints") for p in (run_dir / folder).glob(f"{stem}[_.]*")]
         if log.get("status") != "completed":
@@ -75,7 +76,7 @@ def main():
         elif task_id not in analysed:
             unanalysed += own_files
         else:
-            trajectory = run_dir / log["trajectory"]
+            trajectory = trajectory_path(run_dir, task)
             trajectories += [trajectory] if trajectory.exists() else []
             leftovers += [p for p in own_files if p != trajectory]  # checkpoints, half-written .tmp files
 
@@ -96,8 +97,8 @@ def main():
     freed = total_size(trajectories + leftovers)
     print(f"Delete     the trajectories of {len(trajectories)} completed, analysed task(s)"
           + (f", and {len(leftovers)} leftover file(s) (checkpoints, unfinished writes)" if leftovers else "") + f": {freed}")
-    print(f"Keep       analysis/ ({total_size((run_dir / 'analysis').rglob('*'))}), {CHECKSUMS}, logs/, "
-          f"slurm/, tasks.csv, physics.yaml, run.yaml")
+    print(f"Keep       analysis/ ({total_size((run_dir / 'analysis').rglob('*'))}), {CHECKSUMS}, jobs/, "
+          f"manifest.csv, tasks.csv, physics.yaml, run.yaml")
     for line in also_kept:
         print(f"           {line}")
     print()

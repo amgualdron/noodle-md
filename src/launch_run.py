@@ -2,16 +2,20 @@
 
 The first time, it reads run.yaml + your CSV, checks the settings, shows the plan (how
 many tasks, how many steps, roughly how many core-hours, how much disk) and asks before
-doing anything. If you say yes, it
-writes the run's task list and starts the tasks:
+doing anything. If you say yes, it freezes the run:
     tasks.csv      one row per task: protein x physics set x replicate, with its seed
-    physics.yaml   the physics sets this run uses, fully written out and frozen
-Later launches show what is done, what is still in the queue and what will be
-(re)started, then start only the tasks that are neither completed nor in the queue.
-Tasks that were stopped resume from their last checkpoint.
+    physics.yaml   the physics sets this run uses, fully written out
+    manifest.csv   one row per protein and physics set: conditions and sequence descriptors
+and starts the tasks. Later launches show what is done, what is still in the queue and
+what will be (re)started, then start only the tasks that are neither completed nor in
+the queue. Tasks that were stopped resume from their last checkpoint.
 
-Tasks run on a cluster (when sbatch exists) as one SLURM job array, one array element
-per task; on your own computer, one after another, right here.
+Tasks are grouped into jobs: a job runs on one core and works through its tasks one
+after another, so thousands of short tasks become a few hundred jobs of up to about
+JOB_TARGET_HOURS each, and a long task gets a job of its own. The longest jobs are
+numbered (and so started) first. On a cluster (when sbatch exists) the jobs are
+submitted as a SLURM job array, one array element per job; on your own computer they
+run one after another, right here.
 """
 
 import csv
@@ -28,14 +32,16 @@ from statistics import median
 
 import yaml
 
-from runs import (ROOT, SEQUENCES, about, brush_size, compress, conditions, file_size, read_log,
-                  read_submissions, read_tasks, run_from_command_line, run_lengths, slurm_queue,
-                  write_csv)
+from runs import (RESIDUE_STEPS_PER_SECOND, ROOT, SEQUENCES, about, brush_size, checkpoint_path, compress,
+                  conditions, file_size, job_numbers, measured_speeds, read_submissions, read_tasks,
+                  run_from_command_line, run_lengths, seconds_left, slurm_queue, task_states, write_csv,
+                  write_job)
 
 # The 20 standard amino acids: the same letters as the residue table in forcefield.py
 # (repeated here so this script does not have to load HOOMD).
 AMINO_ACIDS = set("ARNDCQEGHILKMFPSTWYV")
-STOPPED_EXIT_CODE = 3  # simulate.py's exit code when a task stopped because it was asked to
+STOPPED_EXIT_CODE = 3  # simulate.py's exit code when a job stopped because it was asked to
+JOB_TARGET_HOURS = 4   # short tasks are packed into jobs of up to about this long (estimated)
 
 RUN_SETTINGS = ["description", "sequences_csv", "name_column", "sequence_column", "rows",
                 "max_residues", "physics", "replicates", "time_limit_days", "max_running", "extra_sbatch"]
@@ -47,12 +53,6 @@ CHOICES = {"geometry": ["bulk", "grafted"], "graft_terminus": ["N", "C"],
 
 BYTES_PER_RESIDUE = 12      # trajectory size per residue per frame: one position (3 x 4 bytes)
 BYTES_PER_FRAME = 100       # plus the step number and the file's index, per frame
-
-# Speed of one CPU core, for the rough cost shown before launching: residues x steps per
-# second. Measured with this force field on one core of a recent laptop: ~1.0 million for
-# single chains of 25-100 residues, 0.6-1.2 million for brushes (denser is slower). A
-# cluster core may differ by a factor ~2 either way; ./noodle status measures the real speed.
-RESIDUE_STEPS_PER_SECOND = 1.0e6
 
 
 # ── Checking the settings ─────────────────────────────────────────────────────
@@ -314,7 +314,7 @@ def trajectory_bytes(physics, n_residues):
     return int(physics["frames"]) * (BYTES_PER_RESIDUE * chains * n_residues + BYTES_PER_FRAME)
 
 
-def show_plan(run_dir, settings, sequences, skipped, too_long, physics, tasks, on_cluster):
+def show_plan(run_dir, settings, sequences, skipped, too_long, physics, tasks, n_jobs, on_cluster):
     lengths = sorted(map(len, sequences.values()))
     print(f"New run: {run_dir.name}" + (f'   "{settings["description"]}"' if settings.get("description") else ""))
     print()
@@ -366,9 +366,11 @@ def show_plan(run_dir, settings, sequences, skipped, too_long, physics, tasks, o
     if on_cluster:
         at_once = f"at most {settings['max_running']} at a time" if settings["max_running"] else "no limit on how many at a time"
         extra = f", extra sbatch options: {' '.join(settings['extra_sbatch'])}" if settings["extra_sbatch"] else ""
-        print(f"Cluster    {len(tasks)} SLURM jobs, time limit {settings['time_limit_days']:g} day(s) each, {at_once}{extra}")
+        print(f"Cluster    {len(tasks)} tasks in {n_jobs} SLURM job(s) of up to ~{job_target_hours(settings):g} h "
+              f"(short tasks share a job), time limit {settings['time_limit_days']:g} day(s) each, {at_once}{extra}")
     else:
-        print("Where      no SLURM here: the tasks run in this terminal (Ctrl-C stops, ./noodle launch continues)")
+        print("Where      no SLURM here: the tasks run in this terminal, one after another "
+              "(Ctrl-C stops, ./noodle launch continues)")
     print()
     print("Once launched, the run is frozen: only time_limit_days, max_running and extra_sbatch can still change.")
 
@@ -382,26 +384,78 @@ def confirm(question):
         return False
 
 
+# ── Grouping tasks into jobs ──────────────────────────────────────────────────
+def job_target_hours(settings):
+    """A job's estimated length: JOB_TARGET_HOURS, but at most half the time limit (the
+    estimates can be off by a factor 2)."""
+    return min(JOB_TARGET_HOURS, settings["time_limit_days"] * 24 / 2)
+
+
+def group_into_jobs(seconds, settings):
+    """[[task ids of job 1], [task ids of job 2], ...] from {task id: estimated seconds}.
+
+    "First fit decreasing": take the tasks from the longest to the shortest and put each
+    into the first job that still has room for it, else start a new job. A task longer
+    than the target fills a job on its own. The longest jobs come first, and in each job
+    the longest tasks come first."""
+    target = job_target_hours(settings) * 3600
+    smallest = min(seconds.values())
+    open_jobs, full_jobs = [], []  # each job: [estimated seconds, [task ids]]
+    for task_id in sorted(seconds, key=lambda i: -seconds[i]):
+        for job in open_jobs:
+            if job[0] + seconds[task_id] <= target:
+                break
+        else:
+            job = [0.0, []]
+            open_jobs.append(job)
+        job[0] += seconds[task_id]
+        job[1].append(task_id)
+        if target - job[0] < smallest:  # no task left can fit in it any more
+            open_jobs.remove(job)
+            full_jobs.append(job)
+    jobs = sorted(full_jobs + open_jobs, key=lambda job: -seconds[job[1][0]])
+    return [task_ids for _, task_ids in jobs]
+
+
+def write_jobs(run_dir, groups, tasks, states):
+    """Write a job file for every group of tasks (numbered after the run's existing jobs)
+    and return the new job numbers. A task's earlier progress (attempts, run time, steps)
+    is carried over into its new row."""
+    by_id = {task["task_id"]: task for task in tasks}
+    first = max(job_numbers(run_dir), default=0) + 1
+    carried = ["chains", "phase", "step", "total_steps", "steps_per_second", "run_time_s", "attempts",
+               "host", "started_at", "last_update"]
+    for job, task_ids in enumerate(groups, first):
+        rows = []
+        for task_id in task_ids:
+            task, state = by_id[task_id], states.get(task_id, {})
+            rows.append(dict(task_id=task_id, sequence_name=task["sequence_name"], physics=task["physics"],
+                             replicate=task["replicate"], N=task["length"], status="submitted",
+                             **{key: state[key] for key in carried if state.get(key) is not None}))
+        write_job(run_dir, job, rows)
+    return list(range(first, first + len(groups)))
+
+
 # ── Deciding what to start (later launches) ───────────────────────────────────
 def plan_relaunch(run_dir, on_cluster):
     """Sort the tasks into done / still in the queue / failed / to start, say so, and
     return the ids of the tasks to start (failed ones only if you agree)."""
     tasks = read_tasks(run_dir)
-    names = {int(t["task_id"]): t["sequence_name"] for t in tasks}
-    logs = {task_id: read_log(run_dir, task_id) for task_id in names}
-    done = [i for i in names if logs[i].get("status") == "completed"]
+    names = {t["task_id"]: t["sequence_name"] for t in tasks}
+    states = task_states(run_dir)
+    done = [i for i in names if states.get(i, {}).get("status") == "completed"]
     if len(done) == len(tasks):
         print(f"All {len(tasks)} tasks of '{run_dir.name}' are completed.")
         return []
 
     unfinished = [i for i in names if i not in done]
     in_queue = []
-    if on_cluster:
-        queue, submitted = slurm_queue(run_dir.name), read_submissions(run_dir)
-        in_queue = [i for i in unfinished if submitted.get(i) in queue]
-    failed = [i for i in unfinished if i not in in_queue and logs[i].get("status") == "failed"]
+    if on_cluster:  # in a job that is still waiting or running: left alone
+        queue, submitted = slurm_queue(run_dir.name) or {}, read_submissions(run_dir)
+        in_queue = [i for i in unfinished if i in states and submitted.get(states[i]["job"]) in queue]
+    failed = [i for i in unfinished if i not in in_queue and states.get(i, {}).get("status") == "failed"]
     to_start = [i for i in unfinished if i not in in_queue and i not in failed]
-    resuming = [i for i in to_start if (run_dir / "checkpoints" / f"task_{i:04d}.gsd").exists()]
+    resuming = [i for i in to_start if checkpoint_path(run_dir, i).exists()]
 
     parts = [f"{len(done)} done"]
     if in_queue:
@@ -415,91 +469,103 @@ def plan_relaunch(run_dir, on_cluster):
     if failed:
         print(f"\n{len(failed)} task(s) failed with an error last time:")
         for i in failed[:10]:
-            print(f"  task {i:>4}  {names[i]}: {logs[i]['error']}")
+            print(f"  task {i:>4}  {names[i]}: {states[i]['error']}")
         if len(failed) > 10:
             print(f"  ... and {len(failed) - 10} more (./noodle status {run_dir.name} lists them all)")
-        print("They will most likely fail again unless the cause has been fixed"
-              + (f" (full messages in runs/{run_dir.name}/slurm/)." if on_cluster else "."))
+        print(f"They will most likely fail again unless the cause has been fixed (full messages in "
+              f"runs/{run_dir.name}/jobs/job_<number>.out; the job of each task is in log.csv).")
         if confirm("Start the failed tasks again anyway?"):
             to_start = sorted(to_start + failed)
     return to_start
 
 
-# ── Starting the tasks ────────────────────────────────────────────────────────
+# ── Starting the jobs ─────────────────────────────────────────────────────────
 def max_array_size():
     out = subprocess.run(["scontrol", "show", "config"], capture_output=True, text=True).stdout
     match = re.search(r"MaxArraySize\s*=\s*(\d+)", out)
     return int(match.group(1)) if match else 1001
 
 
-def submit_to_slurm(run_dir, settings, task_ids):
+def submit_to_slurm(run_dir, settings, jobs):
+    """Submit the jobs (numbers) as SLURM job arrays and record them in jobs/submitted.csv."""
     name = run_dir.name
-    (run_dir / "slurm").mkdir(exist_ok=True)
-    time_limit_minutes = round(settings["time_limit_days"] * 24 * 60)
-    jobs = {}  # task id -> SLURM job id
+    time_limit_minutes = max(1, round(settings["time_limit_days"] * 24 * 60))  # 0 would mean no limit
+    slurm_ids = {}  # job number -> SLURM job id
 
-    # Array indices must stay below the cluster's MaxArraySize, so a long task list is
-    # sent as several arrays, each with an offset: task id = offset + array index.
+    # Array indices must stay below the cluster's MaxArraySize, so many jobs are sent as
+    # several arrays, each with an offset: job number = offset + array index.
     chunk = max_array_size() - 1
-    for offset in range(0, max(task_ids), chunk):
-        ids = [i for i in task_ids if offset < i <= offset + chunk]
-        if not ids:
+    for offset in range(0, max(jobs), chunk):
+        numbers = [j for j in jobs if offset < j <= offset + chunk]
+        if not numbers:
             continue
-        array = compress([i - offset for i in ids])
+        array = compress([j - offset for j in numbers])
         if settings["max_running"]:
             array += f"%{settings['max_running']}"
-        output = "task_%a.out" if offset == 0 else f"task_%a_plus_{offset}.out"
+        # Each job writes its own jobs/job_0007.out (see slurm_job.sh); SLURM's --output only
+        # gets SLURM's own messages (e.g. about the time limit), all in jobs/slurm.out.
         command = ["sbatch", "--parsable", f"--job-name={name}", f"--array={array}",
                    f"--time={time_limit_minutes}", f"--chdir={ROOT}", "--open-mode=append",
-                   f"--output={run_dir / 'slurm' / output}", *settings["extra_sbatch"],
+                   f"--output={run_dir / 'jobs' / 'slurm.out'}", *settings["extra_sbatch"],
                    str(ROOT / "src" / "slurm_job.sh"), f"runs/{name}", str(offset)]
         result = subprocess.run(command, capture_output=True, text=True)
         if result.returncode != 0:
             sys.exit(f"sbatch refused the job:\n{result.stderr}"
-                     + (f"\n({len(jobs)} task(s) had already been submitted.)" if jobs else ""))
-        job_id = result.stdout.strip().split(";")[0]
-        jobs.update({i: f"{job_id}_{i - offset}" for i in ids})
+                     + (f"\n({len(slurm_ids)} job(s) had already been submitted.)" if slurm_ids else ""))
+        array_id = result.stdout.strip().split(";")[0]
+        slurm_ids.update({j: f"{array_id}_{j - offset}" for j in numbers})
 
-        # Record which SLURM job runs which task, so ./noodle status can find it in the queue.
-        submissions = run_dir / "slurm" / "submissions.csv"
+        # Record which SLURM job runs which job, so ./noodle status can find it in the queue.
+        submissions = run_dir / "jobs" / "submitted.csv"
         is_new_file = not submissions.exists()
         with open(submissions, "a", newline="") as f:
             writer = csv.writer(f)
             if is_new_file:
-                writer.writerow(["task_id", "slurm_job", "submitted_at"])
+                writer.writerow(["job", "slurm_job", "submitted_at"])
             submitted_at = datetime.now().isoformat(timespec="seconds")
-            writer.writerows([i, jobs[i], submitted_at] for i in ids)
-        print(f"Submitted {len(ids)} task(s) as SLURM job {job_id}.")
+            writer.writerows([j, slurm_ids[j], submitted_at] for j in numbers)
+        print(f"Submitted {len(numbers)} job(s) as SLURM job array {array_id}.")
 
     # Check that the jobs really are in the queue
     queue = slurm_queue(name) or {}
-    found = sum(job in queue for job in jobs.values())
-    if found == len(jobs):
-        print(f"Confirmed: {found} of {len(jobs)} task(s) are in the SLURM queue.")
+    found = sum(slurm_id in queue for slurm_id in slurm_ids.values())
+    if found == len(slurm_ids):
+        print(f"Confirmed: {found} of {len(slurm_ids)} job(s) are in the SLURM queue.")
     else:
-        print(f"Only {found} of {len(jobs)} task(s) are in the SLURM queue; the others may have "
+        print(f"Only {found} of {len(slurm_ids)} job(s) are in the SLURM queue; the others may have "
               f"finished or failed already: see ./noodle status {name}")
     print(f"Check on them any time with:  ./noodle status {name}")
 
 
-def run_here(run_dir, task_ids):
-    print(f"No SLURM here: running {len(task_ids)} task(s) one after another. "
+def run_here(run_dir, jobs):
+    print(f"No SLURM here: running {len(jobs)} job(s) one after another. "
           f"Ctrl-C stops; ./noodle launch {run_dir.name} again resumes.\n")
-    # Ctrl-C reaches the task too, which then saves a checkpoint and stops cleanly; this
-    # program ignores it and simply starts no further tasks.
+    # Ctrl-C reaches the job too, which then saves a checkpoint and stops cleanly; this
+    # program ignores it and simply starts no further jobs.
     signal.signal(signal.SIGINT, signal.SIG_IGN)
-    for n, task_id in enumerate(task_ids, 1):
-        print(f"── task {task_id} ({n} of {len(task_ids)}) ──")
-        result = subprocess.run([sys.executable, str(ROOT / "src" / "simulate.py"), str(run_dir), str(task_id)])
+    for job in jobs:
+        result = subprocess.run([sys.executable, str(ROOT / "src" / "simulate.py"), str(run_dir), str(job)])
+        print()
         if result.returncode == STOPPED_EXIT_CODE:
-            print(f"\nStopped. ./noodle launch {run_dir.name} continues where it left off.")
+            print(f"Stopped. ./noodle launch {run_dir.name} continues where it left off.")
             return
         if result.returncode != 0:
-            print(f"Task {task_id} FAILED (error above).")
-        print()
-    failed = [i for i in task_ids if read_log(run_dir, i).get("status") == "failed"]
-    print(f"Finished: {len(task_ids) - len(failed)} of {len(task_ids)} task(s) completed"
-          + (f", {len(failed)} failed (tasks {compress(failed)})." if failed else "."))
+            print(f"Job {job} ended with an error (above).")
+    states = task_states(run_dir)
+    ran = [task_id for task_id, state in states.items() if state["job"] in jobs]
+    failed = [i for i in ran if states[i]["status"] == "failed"]
+    print(f"Finished: {len(ran) - len(failed)} of {len(ran)} task(s) completed"
+          + (f", {len(failed)} failed (tasks {compress(sorted(failed))})." if failed else "."))
+
+
+def estimated_seconds(run_dir, task_ids, tasks, physics):
+    """{task id: estimated run time still needed}, from the speeds this run has measured,
+    or the rough core speed before any (at least a second each)."""
+    states = task_states(run_dir) if (run_dir / "jobs").exists() else {}
+    speeds = measured_speeds(tasks, states)
+    by_id = {task["task_id"]: task for task in tasks}
+    return {i: max(1.0, seconds_left(by_id[i], states.get(i, {}), physics[by_id[i]["physics"]], speeds, rough=True))
+            for i in task_ids}
 
 
 def main():
@@ -510,24 +576,30 @@ def main():
 
     if not (run_dir / "tasks.csv").exists():
         sequences, skipped, too_long, row_numbers, physics, tasks = plan_tasks(run_dir, settings)
-        show_plan(run_dir, settings, sequences, skipped, too_long, physics, tasks, on_cluster)
+        to_start = [t["task_id"] for t in tasks]
+        groups = group_into_jobs(estimated_seconds(run_dir, to_start, tasks, physics), settings)
+        show_plan(run_dir, settings, sequences, skipped, too_long, physics, tasks, len(groups), on_cluster)
         if not confirm(f"Launch these {len(tasks)} tasks?"):
             print("Nothing was launched.")
             return
         write_tasks(run_dir, settings, sequences, row_numbers, physics, tasks)
-        to_start = [t["task_id"] for t in tasks]
     else:
         if (run_dir / "run.yaml").stat().st_mtime > (run_dir / "tasks.csv").stat().st_mtime:
             print("Note: run.yaml was edited after this run was launched. Only time_limit_days, "
                   "max_running and extra_sbatch changes take effect; for anything else make a new run.\n")
         to_start = plan_relaunch(run_dir, on_cluster)
+        if not to_start:
+            return
+        tasks = read_tasks(run_dir)
+        physics = yaml.safe_load((run_dir / "physics.yaml").read_text())
+        groups = group_into_jobs(estimated_seconds(run_dir, to_start, tasks, physics), settings)
+        print(f"Starting {len(to_start)} task(s) in {len(groups)} job(s) of up to ~{job_target_hours(settings):g} h.")
 
-    if not to_start:
-        return
+    jobs = write_jobs(run_dir, groups, read_tasks(run_dir), task_states(run_dir))
     if on_cluster:
-        submit_to_slurm(run_dir, settings, to_start)
+        submit_to_slurm(run_dir, settings, jobs)
     else:
-        run_here(run_dir, to_start)
+        run_here(run_dir, jobs)
 
 
 if __name__ == "__main__":
