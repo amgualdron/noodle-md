@@ -144,17 +144,19 @@ def find_run(text):
         if (run_dir / "run.yaml").exists():
             return run_dir
     if text.isdigit():
-        row = next((row for row in registry() if row["number"] == int(text)), None)
-        if row and (RUNS / row["name"] / "run.yaml").exists():
+        rows = registry()
+        row = next((row for row in rows if row["number"] == int(text)), None)
+        if row and row is registry_row(rows, row["name"]) and (RUNS / row["name"] / "run.yaml").exists():
             return RUNS / row["name"]
-        if row:
+        if row:  # (a later run may have the same name: it has a number of its own)
             sys.exit(f"Run {text} ({row['name']}) no longer exists: its folder was deleted.")
     return None
 
 
 def list_runs():
     """Print every run with its number, how far along it is and its description."""
-    rows = [row for row in registry() if (RUNS / row["name"] / "run.yaml").exists()]
+    rows = registry()
+    rows = [row for row in rows if row is registry_row(rows, row["name"]) and (RUNS / row["name"] / "run.yaml").exists()]
     if not rows:
         print("There are no runs yet. Make one with: noodle new <run name>")
         return

@@ -115,6 +115,8 @@ with a different run layout: finish them with the version that launched them
   instead of 10,000 steps, so a stop request is always answered within about a minute.
 
 ### Fixed
+- `./noodle status` no longer crashes on a task in its first minute (no run time yet).
+- On your own computer, the tasks waiting in a running job show as waiting, not stopped.
 - Replicates of the same protein under the same physics set always get different
   random seeds (before, two could draw the same seed and be the same simulation).
 

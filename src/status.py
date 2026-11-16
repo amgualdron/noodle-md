@@ -39,7 +39,7 @@ def hours_since(timestamp):
     return (datetime.now() - datetime.fromisoformat(timestamp)).total_seconds() / 3600
 
 
-def task_state(log, slurm_job, queue):
+def task_state(log, slurm_job, queue, job_active=False):
     """The state of one task, with what the report needs to describe it:
         state    one of STATES
         percent  how far it got (None if it never started)
@@ -48,6 +48,7 @@ def task_state(log, slurm_job, queue):
     log        the task's current row from its job file ({} if it was never in a job)
     slurm_job  the SLURM id of that job (None if it was never submitted)
     queue      {SLURM id: SLURM state} on a cluster; None on a computer without SLURM
+    job_active on a computer without SLURM: another task of the same job reported recently
     """
     info = dict(state=None, percent=None, silent=None)
     if log.get("total_steps"):
@@ -63,7 +64,7 @@ def task_state(log, slurm_job, queue):
         return dict(info, state="not launched")
     if status == "submitted":
         # its job is waiting, or is running the tasks before it; else the job ended first
-        return dict(info, state="waiting" if in_queue else "stopped")
+        return dict(info, state="waiting" if in_queue or job_active else "stopped")
     if status == "stopped":
         return dict(info, state="stopped")  # it stopped itself (time limit, scancel, Ctrl-C)
 
@@ -199,7 +200,7 @@ def build_report(run_dir, settings, rows, speeds, color, limit):
     if counts["stopped"]:
         report.heading("stopped", counts["stopped"], f"./noodle launch {name} resumes them from their last checkpoint")
         report.tasks(by_state["stopped"], lambda r: "not started yet" if r["percent"] is None else
-                     f"stopped at {r['percent']:3.0f}% after {duration(r['log'].get('run_time_s', 0))} of run time"
+                     f"stopped at {r['percent']:3.0f}% after {duration(r['log'].get('run_time_s') or 0)} of run time"
                      + (f" ({r['log']['stop_reason']})" if r["log"].get("stop_reason") else "")
                      + (f", needs {about(r['left'])} more" if r["left"] is not None else ""))
 
@@ -210,8 +211,8 @@ def build_report(run_dir, settings, rows, speeds, color, limit):
         def running_details(r):
             if r["percent"] is None:
                 return "starting"
-            text = (f"{r['log'].get('phase', 'starting'):13s} {r['percent']:3.0f}%  "
-                    f"{duration(r['log'].get('run_time_s', 0))} so far")
+            text = (f"{r['log'].get('phase') or 'starting':13s} {r['percent']:3.0f}%  "
+                    f"{duration(r['log'].get('run_time_s') or 0)} so far")
             if r["left"] is not None:
                 text += f", {about(r['left'])} left"
             if r["silent"]:
@@ -303,10 +304,14 @@ def main():
     submitted = read_submissions(run_dir)
     states = task_states(run_dir)
     tasks = read_tasks(run_dir)
+    # without SLURM, a job is going while one of its tasks has reported recently
+    active_jobs = {s["job"] for s in states.values()
+                   if s["status"] == "running" and hours_since(s["last_update"]) < STALE_HOURS}
     rows = []
     for task in tasks:
         log = states.get(task["task_id"], {})
-        rows.append(dict(task=task, log=log, **task_state(log, submitted.get(log.get("job")), queue)))
+        rows.append(dict(task=task, log=log, **task_state(log, submitted.get(log.get("job")), queue,
+                                                          log.get("job") in active_jobs)))
     speeds = measured_speeds(tasks, states)
     add_time_left(rows, yaml.safe_load((run_dir / "physics.yaml").read_text()), speeds)
 

@@ -34,7 +34,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from observables import BRUSH_OBSERVABLES, DIAGNOSTICS, GRAFTED_OBSERVABLES, OBSERVABLES, analyse_task
+from observables import DIAGNOSTICS, OBSERVABLES, analyse_task
 from runs import (job_numbers, profiles_file, read_csv, read_tasks, refresh_registry, run_from_command_line,
                   run_lengths, task_states, trajectory_path, write_csv)
 

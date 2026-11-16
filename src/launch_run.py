@@ -537,7 +537,7 @@ def submit_to_slurm(run_dir, settings, jobs):
     print(f"Check on them any time with:  ./noodle status {name}")
 
 
-def run_here(run_dir, jobs):
+def run_jobs_here(run_dir, jobs):
     print(f"No SLURM here: running {len(jobs)} job(s) one after another. "
           f"Ctrl-C stops; ./noodle launch {run_dir.name} again resumes.\n")
     # Ctrl-C reaches the job too, which then saves a checkpoint and stops cleanly; this
@@ -601,7 +601,7 @@ def main():
     if on_cluster:
         submit_to_slurm(run_dir, settings, jobs)
     else:
-        run_here(run_dir, jobs)
+        run_jobs_here(run_dir, jobs)
 
 
 if __name__ == "__main__":
