@@ -28,8 +28,9 @@ from statistics import median
 
 import yaml
 
-from runs import (ROOT, SEQUENCES, about, brush_size, compress, file_size, read_log,
-                  read_submissions, read_tasks, run_from_command_line, run_lengths, slurm_queue)
+from runs import (ROOT, SEQUENCES, about, brush_size, compress, conditions, file_size, read_log,
+                  read_submissions, read_tasks, run_from_command_line, run_lengths, slurm_queue,
+                  write_csv)
 
 # The 20 standard amino acids: the same letters as the residue table in forcefield.py
 # (repeated here so this script does not have to load HOOMD).
@@ -146,8 +147,9 @@ def sequence_file(run_dir, settings):
 
 
 def read_sequences(run_dir, settings):
-    """({name: sequence}, [names skipped], [names too long]) for the selected rows of the
-    run's CSV. Too long: more residues than max_residues (if that is set and not 0)."""
+    """({name: sequence}, [names skipped], [names too long], {name: row}) for the selected
+    rows of the run's CSV. Too long: more residues than max_residues (if that is set and
+    not 0). row: the protein's row in the CSV, counted from 1 like the rows setting."""
     csv_path = sequence_file(run_dir, settings)
     with open(csv_path, newline="", encoding="utf-8-sig") as f:
         rows = list(csv.DictReader(f))
@@ -156,8 +158,10 @@ def read_sequences(run_dir, settings):
         if column not in rows[0]:
             sys.exit(f"{csv_path.name} has no column '{column}'. Its columns are: {list(rows[0])}")
 
-    sequences, skipped, too_long = {}, [], []
+    sequences, skipped, too_long, row_numbers = {}, [], [], {}
     max_residues = settings.get("max_residues") or 0
+    for number, row in enumerate(rows, 1):
+        row["_row"] = number
     for row in select_rows(rows, settings["rows"]):
         # names end up in file names, so keep them to safe characters
         name = re.sub(r"[^A-Za-z0-9._-]+", "_", row[name_col].strip())
@@ -171,7 +175,8 @@ def read_sequences(run_dir, settings):
             too_long.append(name)
             continue
         sequences[name] = sequence
-    return sequences, skipped, too_long
+        row_numbers[name] = row["_row"]
+    return sequences, skipped, too_long, row_numbers
 
 
 def physics_sets(run_dir):
@@ -202,10 +207,10 @@ def resolve_physics(all_sets, name):
 def plan_tasks(run_dir, settings):
     """Everything the first launch would create, checked, but not written yet.
 
-    Returns (sequences, skipped, too_long, physics, tasks): the proteins, the names of
-    the rows skipped for unknown letters and for being longer than max_residues, the
-    physics sets {name: settings}, and the task list."""
-    sequences, skipped, too_long = read_sequences(run_dir, settings)
+    Returns (sequences, skipped, too_long, row_numbers, physics, tasks): the proteins, the
+    names of the rows skipped for unknown letters and for being longer than max_residues,
+    each protein's row in the CSV, the physics sets {name: settings}, and the task list."""
+    sequences, skipped, too_long, row_numbers = read_sequences(run_dir, settings)
     if not sequences:
         sys.exit("No usable sequences were selected.")
     physics_names = settings["physics"] if isinstance(settings["physics"], list) else [settings["physics"]]
@@ -232,11 +237,11 @@ def plan_tasks(run_dir, settings):
             for replicate, seed in enumerate(seeds, 1):
                 tasks.append(dict(task_id=len(tasks) + 1, sequence_name=name, physics=physics_name,
                                   replicate=replicate, seed=seed, length=len(sequence), sequence=sequence))
-    return sequences, skipped, too_long, physics, tasks
+    return sequences, skipped, too_long, row_numbers, physics, tasks
 
 
-def write_tasks(run_dir, physics, tasks):
-    """Freeze the run: write its physics sets and task list."""
+def write_tasks(run_dir, settings, sequences, row_numbers, physics, tasks):
+    """Freeze the run: write its physics sets, its task list and the start of its manifest."""
     (run_dir / "physics.yaml").write_text(
         "# The physics sets this run uses, copied from physics.yaml when it was launched.\n"
         + yaml.safe_dump(physics, sort_keys=False))
@@ -244,6 +249,24 @@ def write_tasks(run_dir, physics, tasks):
         writer = csv.DictWriter(f, fieldnames=list(tasks[0]))
         writer.writeheader()
         writer.writerows(tasks)
+    write_manifest(run_dir, settings, sequences, row_numbers, physics)
+
+
+def write_manifest(run_dir, settings, sequences, row_numbers, physics):
+    """manifest.csv: one row per protein and physics set, with everything known before
+    the simulations (name, sequence, where it came from, the physics conditions, the
+    sequence descriptors). ./noodle analyze adds the simulation averages to the same rows."""
+    from descriptors import descriptors  # imports HOOMD (for the residue table), like the plan
+
+    print(f"Computing the sequence descriptors of {len(sequences)} proteins for manifest.csv ...", flush=True)
+    described = {name: descriptors(sequence) for name, sequence in sequences.items()}
+    rows = []
+    for name, sequence in sequences.items():
+        for physics_name, p in physics.items():
+            rows.append(dict(name=name, physics=physics_name, sequence=sequence,
+                             source_csv=settings["sequences_csv"], source_row=row_numbers[name],
+                             **conditions(p), **described[name]))
+    write_csv(rows, run_dir / "manifest.csv")
 
 
 # ── The plan shown before the first launch ────────────────────────────────────
@@ -486,12 +509,12 @@ def main():
     on_cluster = shutil.which("sbatch") is not None
 
     if not (run_dir / "tasks.csv").exists():
-        sequences, skipped, too_long, physics, tasks = plan_tasks(run_dir, settings)
+        sequences, skipped, too_long, row_numbers, physics, tasks = plan_tasks(run_dir, settings)
         show_plan(run_dir, settings, sequences, skipped, too_long, physics, tasks, on_cluster)
         if not confirm(f"Launch these {len(tasks)} tasks?"):
             print("Nothing was launched.")
             return
-        write_tasks(run_dir, physics, tasks)
+        write_tasks(run_dir, settings, sequences, row_numbers, physics, tasks)
         to_start = [t["task_id"] for t in tasks]
     else:
         if (run_dir / "run.yaml").stat().st_mtime > (run_dir / "tasks.csv").stat().st_mtime:

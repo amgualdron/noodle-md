@@ -7,6 +7,19 @@ with a different run layout: finish them with the version that launched them
 
 ## v2 (in progress, branch `release`)
 
+### Added
+- `runs/<name>/manifest.csv`, written at the first launch: one row per protein and
+  physics set with its name, sequence, where it came from (`source_csv`, `source_row`),
+  the physics conditions (`geometry`, `temperature_K`, `ionic_concentration_M`,
+  `graft_terminus`, `wall_charge_density`, `wall_attraction`, `grafting_density`,
+  `chains`) and the sequence descriptors (`src/descriptors.py`): `N`, `net_charge`,
+  `ncpr`, `fcr`, `f_plus`, `f_minus`, `mean_hydro`, `kappa`, `scd`, `scd_pos`,
+  `scd_neg`, `shd`. HPS1 charges (histidine +0.5) and idp-rg's formulas and names, so
+  the values agree with idp-rg (checked: to float32 precision on both shared sets).
+  `kappa` uses Das & Pappu's block-arrangement delta_max (the E/K test sequences give
+  0.0009 and 1, as published); it can exceed 1 for ~2% of sequences, mostly ones with
+  few charges.
+
 ### Changed
 - A task that is about to hit the cluster time limit stops cleanly: SLURM warns it 10
   minutes ahead (`#SBATCH --signal=B:USR1@600` in `src/slurm_job.sh`), and the task saves

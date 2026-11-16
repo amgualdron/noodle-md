@@ -103,7 +103,35 @@ def read_submissions(run_dir):
         return {int(row["task_id"]): row["slurm_job"] for row in csv.DictReader(f)}
 
 
-# ── Brush size, run length and time ───────────────────────────────────────────
+def write_csv(rows, path):
+    """Write a list of dicts as a CSV table, in a single step (a temporary file that then
+    replaces the old one), so a reader never sees half a file. Missing values stay empty;
+    numbers keep 6 significant digits."""
+    import pandas as pd  # only the commands that write tables need pandas
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    pd.DataFrame(rows).to_csv(tmp, index=False, float_format="%.6g")
+    os.replace(tmp, path)
+
+
+# ── Physics conditions, brush size, run length and time ───────────────────────
+# The physics settings copied into manifest.csv, so every row says under which conditions
+# it was simulated, whatever the physics set is called (grafted-only ones stay empty for bulk).
+CONDITION_SETTINGS = ["geometry", "temperature_K", "ionic_concentration_M", "graft_terminus",
+                      "wall_charge_density", "wall_attraction", "grafting_density"]
+GRAFTED_ONLY = ["graft_terminus", "wall_charge_density", "wall_attraction", "grafting_density"]
+
+
+def conditions(physics):
+    """{setting: value} of CONDITION_SETTINGS for one physics set, plus `chains`: how many
+    chains each task simulates (1, or a brush's)."""
+    grafted = physics["geometry"] == "grafted"
+    row = {key: (physics.get(key) if grafted or key not in GRAFTED_ONLY else None) for key in CONDITION_SETTINGS}
+    row["chains"] = brush_size(physics)[0]
+    return row
+
+
 def brush_size(physics):
     """(chains, box width in nm): how many chains a task simulates, and how wide its box is.
 
