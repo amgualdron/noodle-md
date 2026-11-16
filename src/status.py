@@ -58,6 +58,8 @@ def task_state(log, slurm_job, queue):
         return dict(info, state="waiting")
     if log.get("status") == "failed" and slurm_state is None:
         return dict(info, state="failed")
+    if log.get("status") == "stopped" and slurm_state is None:
+        return dict(info, state="stopped")  # it stopped itself (time limit, scancel, Ctrl-C)
 
     if queue is None:  # own computer: has it reported recently?
         if not log:
@@ -221,6 +223,7 @@ def build_report(run_dir, settings, rows, speeds, color, limit):
         report.heading("stopped", counts["stopped"], f"./noodle launch {name} resumes them from their last checkpoint")
         report.tasks(by_state["stopped"], lambda r: "never started (see the slurm/ folder)" if r["percent"] is None else
                      f"stopped at {r['percent']:3.0f}% after {duration(r['log'].get('run_time_s', 0))} of run time"
+                     + (f" ({r['log']['stop_reason']})" if r["log"].get("stop_reason") else "")
                      + (f", needs {about(r['left'])} more" if r["left"] is not None else ""))
 
     # ── Running ──

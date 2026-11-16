@@ -20,6 +20,7 @@ import math
 import random
 import re
 import shutil
+import signal
 import subprocess
 import sys
 from datetime import datetime
@@ -33,6 +34,7 @@ from runs import (ROOT, SEQUENCES, about, brush_size, compress, file_size, read_
 # The 20 standard amino acids: the same letters as the residue table in forcefield.py
 # (repeated here so this script does not have to load HOOMD).
 AMINO_ACIDS = set("ARNDCQEGHILKMFPSTWYV")
+STOPPED_EXIT_CODE = 3  # simulate.py's exit code when a task stopped because it was asked to
 
 RUN_SETTINGS = ["description", "sequences_csv", "name_column", "sequence_column", "rows",
                 "max_residues", "physics", "replicates", "time_limit_days", "max_running", "extra_sbatch"]
@@ -460,9 +462,15 @@ def submit_to_slurm(run_dir, settings, task_ids):
 def run_here(run_dir, task_ids):
     print(f"No SLURM here: running {len(task_ids)} task(s) one after another. "
           f"Ctrl-C stops; ./noodle launch {run_dir.name} again resumes.\n")
+    # Ctrl-C reaches the task too, which then saves a checkpoint and stops cleanly; this
+    # program ignores it and simply starts no further tasks.
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     for n, task_id in enumerate(task_ids, 1):
         print(f"── task {task_id} ({n} of {len(task_ids)}) ──")
         result = subprocess.run([sys.executable, str(ROOT / "src" / "simulate.py"), str(run_dir), str(task_id)])
+        if result.returncode == STOPPED_EXIT_CODE:
+            print(f"\nStopped. ./noodle launch {run_dir.name} continues where it left off.")
+            return
         if result.returncode != 0:
             print(f"Task {task_id} FAILED (error above).")
         print()

@@ -11,6 +11,9 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
+# 10 minutes before the time limit, SLURM sends SIGUSR1: the task then saves a checkpoint
+# and stops cleanly, so a task that runs out of time loses nothing (see simulate.py).
+#SBATCH --signal=B:USR1@600
 
 # One core per task: HOOMD's CPU build runs a simulation on one core, and a run gets
 # its speed from thousands of tasks side by side (a brush too). Print progress straight
@@ -21,4 +24,5 @@ TASK_ID=$(( $2 + SLURM_ARRAY_TASK_ID ))
 echo "=== task $TASK_ID   job ${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}   $(hostname)   $(date) ==="
 
 # The tool's own Python environment (made by setup.sh): no conda activate needed.
-./env/bin/python src/simulate.py "$1" "$TASK_ID"
+# exec: Python replaces this shell, so it is the process that receives SLURM's signals.
+exec ./env/bin/python src/simulate.py "$1" "$TASK_ID"

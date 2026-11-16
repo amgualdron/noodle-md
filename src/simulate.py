@@ -21,6 +21,7 @@ forcefield.py, and writers that save frames to a file. `sim.run(n)` advances n s
 """
 
 import os
+import signal
 import socket
 import sys
 import time
@@ -40,7 +41,35 @@ from runs import brush_size, read_log, read_tasks, run_lengths, update_log
 
 REPORT_EVERY_HOURS = 1     # how often to print progress, update the log and save a checkpoint
 FIRST_REPORT_SECONDS = 60  # one early report, so you can see the speed right away
-CHUNK_STEPS = 10_000       # steps between checks of the clock (cheap; not a physics setting)
+CHUNK_SECONDS = 60         # the simulation runs in chunks of about this long; between chunks it
+                           # checks the clock and whether it was asked to stop (not a physics setting)
+FIRST_CHUNK_STEPS = 1000   # the first chunk, before the speed is known (and the smallest chunk)
+STOPPED_EXIT_CODE = 3      # exit code of a task that stopped because it was asked to
+
+
+# ── Stopping cleanly ──────────────────────────────────────────────────────────
+# A task can be asked to stop by a signal:
+#   SIGUSR1  SLURM, 10 minutes before the time limit (#SBATCH --signal in slurm_job.sh)
+#   SIGTERM  scancel (./noodle cancel)
+#   SIGINT   Ctrl-C, when running on your own computer
+# HOOMD can't be interrupted in the middle of sim.run(), so the signal only notes the
+# request here; after the current chunk (about CHUNK_SECONDS) the task saves a
+# checkpoint and stops, losing nothing. ./noodle launch resumes it from there.
+STOP_REASONS = {signal.SIGUSR1: "time limit", signal.SIGTERM: "cancelled", signal.SIGINT: "Ctrl-C"}
+stop_requests = []  # the reasons received so far
+
+
+def request_stop(signal_number, frame):
+    if stop_requests and signal_number == signal.SIGINT:
+        raise KeyboardInterrupt  # a second Ctrl-C: quit right away (the last hourly checkpoint stays)
+    reason = STOP_REASONS[signal_number]
+    stop_requests.append(reason)
+    print(f"\n[{now()}] Asked to stop ({reason}): saving a checkpoint after the current chunk"
+          + (" (Ctrl-C again to quit right away)" if reason == "Ctrl-C" else ""), flush=True)
+
+
+for _signal in STOP_REASONS:
+    signal.signal(_signal, request_stop)
 
 
 # ── Geometry and starting configuration ───────────────────────────────────────
@@ -260,7 +289,7 @@ def main():
 
     chains = geometry.get("chains", 1)
     update_log(
-        run_dir, task_id, status="running", sequence_name=name, n_residues=len(sequence),
+        run_dir, task_id, status="running", stop_reason=None, sequence_name=name, n_residues=len(sequence),
         chains=chains, physics=task["physics"], geometry=geometry, seed=seed,
         equilibration_steps=equilibration, production_steps=production, total_steps=total,
         step=sim.timestep, trajectory=str(trajectory.relative_to(run_dir)),
@@ -281,11 +310,17 @@ def main():
     last_report_time, last_report_step = session_start, sim.timestep
     next_report_time = session_start + FIRST_REPORT_SECONDS
 
-    while sim.timestep < total:
+    chunk_steps = FIRST_CHUNK_STEPS
+    while sim.timestep < total and not stop_requests:
         if sim.timestep >= equilibration and writer not in sim.operations.writers:
             sim.operations.writers.append(writer)  # production starts: begin saving frames
         end_of_phase = equilibration if sim.timestep < equilibration else total
-        sim.run(min(CHUNK_STEPS, end_of_phase - sim.timestep))
+        steps = min(chunk_steps, end_of_phase - sim.timestep)
+        chunk_start = time.monotonic()
+        sim.run(steps)
+        if steps == chunk_steps:  # a full chunk: size the next one to take about CHUNK_SECONDS
+            elapsed = max(time.monotonic() - chunk_start, 1e-3)
+            chunk_steps = max(FIRST_CHUNK_STEPS, int(steps / elapsed * CHUNK_SECONDS))
 
         if time.monotonic() >= next_report_time:
             writer.flush()
@@ -303,6 +338,17 @@ def main():
             next_report_time = clock + REPORT_EVERY_HOURS * 3600
     writer.flush()
 
+    # ── Asked to stop: save everything, so ./noodle launch resumes from here ──
+    if sim.timestep < total:
+        save_checkpoint(sim, checkpoint)
+        run_time = round(previous_run_time + time.monotonic() - session_start)
+        phase = "equilibration" if sim.timestep < equilibration else "production"
+        update_log(run_dir, task_id, status="stopped", stop_reason=stop_requests[0], step=sim.timestep,
+                   phase=phase, run_time_s=run_time, last_update=now())
+        print(f"Stopped ({stop_requests[0]}) at {100 * sim.timestep / total:.1f}%, checkpoint saved: "
+              "./noodle launch resumes it from here")
+        return "stopped"
+
     # ── Done ──
     with gsd.hoomd.open(trajectory, "r") as f:
         frames = len(f)
@@ -315,7 +361,8 @@ def main():
 
 if __name__ == "__main__":
     try:
-        main()
+        if main() == "stopped":
+            sys.exit(STOPPED_EXIT_CODE)
     except Exception as error:
         # Record the error for ./noodle status and ./noodle launch, then stop with the full
         # message (it ends up in the task's slurm/ output file, or on screen).

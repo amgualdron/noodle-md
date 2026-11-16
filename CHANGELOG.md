@@ -7,6 +7,15 @@ with a different run layout: finish them with the version that launched them
 
 ## v2 (in progress, branch `release`)
 
+### Changed
+- A task that is about to hit the cluster time limit stops cleanly: SLURM warns it 10
+  minutes ahead (`#SBATCH --signal=B:USR1@600` in `src/slurm_job.sh`), and the task saves
+  a checkpoint and records `stopped (time limit)`. Nothing is lost (before: up to an
+  hour). `scancel` and Ctrl-C (own computer) stop it the same way; a second Ctrl-C quits
+  at once.
+- The simulation runs in chunks of about a minute (sized from the measured speed)
+  instead of 10,000 steps, so a stop request is always answered within about a minute.
+
 ### Fixed
 - Replicates of the same protein under the same physics set always get different
   random seeds (before, two could draw the same seed and be the same simulation).
