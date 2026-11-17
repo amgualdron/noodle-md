@@ -3,7 +3,6 @@
 It first brings each run's analysis up to date (as ./noodle analyze), then writes:
     manifest.csv     every run's manifest.csv, one after another
     replicates.csv   every run's analysis/replicates.csv
-    profiles.csv     every run's analysis/profiles.csv
     runs.csv         the runs' rows of runs/runs.csv (numbers, dates, counts, core-hours)
     physics/<run>.yaml   the physics sets each run used, fully written out
 The tables start with a column `run`, so rows from different runs stay apart. Copy the
@@ -97,7 +96,7 @@ def main():
             print("Nothing was exported.")
             return
 
-    tables = {"manifest.csv": [], "replicates.csv": [], "profiles.csv": []}
+    tables = {"manifest.csv": [], "replicates.csv": []}
     for run_dir in run_dirs:
         with contextlib.redirect_stdout(io.StringIO()):  # its own report would be long; one line instead
             analyze(run_dir)
@@ -107,8 +106,7 @@ def main():
             line += f"  [!] not finished ({counts['completed']} completed, {counts['failed']} failed)"
         print(line)
         for table, path in (("manifest.csv", run_dir / "manifest.csv"),
-                            ("replicates.csv", run_dir / "analysis" / "replicates.csv"),
-                            ("profiles.csv", run_dir / "analysis" / "profiles.csv")):
+                            ("replicates.csv", run_dir / "analysis" / "replicates.csv")):
             if path.exists():
                 tables[table] += [dict(run=run_dir.name, **row) for row in read_csv(path)]
     physics_conflicts(run_dirs)
@@ -128,7 +126,7 @@ def main():
     size = sum(p.stat().st_size for p in folder.rglob("*") if p.is_file())
     print(f"\nExported {len(run_dirs)} run(s) to exports/{name}/ ({size / 1e6:.1f} MB): manifest.csv "
           f"({len(tables['manifest.csv'])} rows), replicates.csv ({len(tables['replicates.csv'])}), "
-          f"profiles.csv ({len(tables['profiles.csv'])}), runs.csv, physics/")
+          "runs.csv, physics/")
     print(f"To your own computer, e.g.:  rsync -av <you>@<cluster>:{folder}/ ./{name}/")
 
 

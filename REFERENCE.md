@@ -1,9 +1,10 @@
 # noodle-md reference
 
 How noodle-md works and why: the model, the pipeline from a CSV of sequences to tables
-of results, every file it writes, every formula behind the numbers, and how to change
-it. The [README](README.md) is for using the tool; this document is for understanding
-it, checking it, and developing it further.
+of results, every file it writes, and how to change it. The [README](README.md) is for
+using the tool; this document is for understanding it, checking it, and developing it
+further. The exact definition of every column of the results tables is in
+[OBSERVABLES.md](OBSERVABLES.md).
 
 **Contents**
 
@@ -48,10 +49,10 @@ sequences CSV + run.yaml + physics.yaml
 SLURM job array (one core per job) ── each job, task after task:
         │     build -> equilibrate -> produce trajectory -> analyse -> results into its job file
         ▼
-jobs/job_NNNN.csv (+ _profiles.csv)
+jobs/job_NNNN.csv
         │  noodle analyze: pool replicates
         ▼
-manifest.csv · analysis/replicates.csv · analysis/profiles.csv · analysis/report.json
+manifest.csv · analysis/replicates.csv · analysis/report.json
         │  noodle export
         ▼
 exports/<name>/   -> your own computer
@@ -74,7 +75,6 @@ exports/<name>/   -> your own computer
 | **checkpoint** | a task's full state saved to disk, so it can continue later |
 | **trajectory** | a task's frames, one `.gsd` file |
 | **observable** | a number measured from a trajectory (Rg, height, ...) |
-| **profile** | a quantity along a coordinate (density vs height, distance vs separation along the chain) |
 | **descriptor** | a number computed from the sequence alone (charge patterning, hydropathy...) |
 | **tu** | the model's unit of time (0.489 ps; see 3.1) |
 
@@ -312,7 +312,7 @@ The job reads its job file and runs every task not yet completed, in order. For 
 4. **Done**: the task records `completed` with its frame count and deletes its
    checkpoint.
 5. **Analyse** (section 7): the task's averages go into its row of the job file
-   (`analysed_at`, then every observable), its profiles into `jobs/job_NNNN_profiles.csv`.
+   (`analysed_at`, then every observable).
    If the analysis fails, the error goes into `analysis_error` and `noodle analyze`
    tries again later; the simulation still counts as completed.
 
@@ -366,17 +366,16 @@ cleanly (4.5); `noodle launch` continues them.
 
 Gathers every analysed task from the job files. Completed tasks without results
 (their job's analysis failed, or the job was killed during it) are analysed here, from
-their trajectories, into `analysis/reanalysed.csv` and `reanalysed_profiles.csv`, once.
-Then it writes `analysis/replicates.csv` (one row per task), the results columns of
-`manifest.csv` (replicates pooled, 7.4), `analysis/profiles.csv` (profiles pooled) and
-`analysis/report.json` (5.3), refreshes `runs.csv`, and prints a short report. It takes
+their trajectories, into `analysis/reanalysed.csv`, once. Then it writes
+`analysis/replicates.csv` (one row per task), the results columns of `manifest.csv`
+(replicates pooled: OBSERVABLES.md, section 10) and `analysis/report.json` (5.3), refreshes `runs.csv`, and prints a short report. It takes
 seconds, can run at any time, and works the same after the trajectories are deleted
 (the results live in `jobs/`).
 
 ### 4.10 `noodle export <run> [<run> ...]`
 
 Runs `analyze` on each run, then writes `exports/<name>/`: the runs' `manifest.csv`,
-`replicates.csv` and `profiles.csv` stacked with a first column `run`, their rows of
+`replicates.csv` stacked with a first column `run`, their rows of
 `runs.csv`, and `physics/<run>.yaml`. The folder is written under a temporary name and
 renamed at the end, so it is never half-written. It warns about unfinished runs and
 about a physics set name that means different settings in different runs.
@@ -429,7 +428,6 @@ nodes never overwrite each other and never leave half a file.
 | `manifest.csv` | launch creates it; analyze rewrites its results columns | one row per protein and physics set |
 | `jobs/submitted.csv` | launch, one line per submitted job | job number → SLURM id |
 | `jobs/job_NNNN.csv` | launch, just before submitting; then only job NNNN | the job's tasks, their progress and results |
-| `jobs/job_NNNN_profiles.csv` | job NNNN | profiles of its tasks |
 | `jobs/job_NNNN.out` | job NNNN | everything it printed |
 | `jobs/slurm.out` | SLURM | SLURM's own messages (normally empty) |
 | `log.csv` | status | every task's current state |
@@ -461,9 +459,7 @@ Tables are plain CSV: numbers with 6 significant digits, empty cells for "none" 
 | `host`, `started_at`, `last_update`, `completed_at` | where and when |
 | `stop_reason`, `error` | why it stopped or failed |
 | `analysed_at`, `analysis_error` | the in-job analysis |
-| then every observable and its `_err`, and the diagnostics | section 7 |
-
-**`jobs/job_NNNN_profiles.csv`**: `task_id`, `profile`, `x`, `x_unit`, `value`, `value_unit`.
+| then every observable and its `_err`, and the quality checks | OBSERVABLES.md |
 
 **`jobs/submitted.csv`**: `job`, `slurm_job`, `submitted_at`.
 
@@ -479,18 +475,15 @@ Tables are plain CSV: numbers with 6 significant digits, empty cells for "none" 
 2. conditions: `geometry`, `temperature_K`, `ionic_concentration_M`, `graft_terminus`,
    `wall_charge_density`, `wall_attraction`, `grafting_density` (grafted only),
    `chains`
-3. descriptors (section 6): `N`, `net_charge`, `ncpr`, `fcr`, `f_plus`, `f_minus`,
+3. descriptors (OBSERVABLES.md, section 4): `N`, `net_charge`, `ncpr`, `fcr`, `f_plus`, `f_minus`,
    `mean_hydro`, `kappa`, `scd`, `scd_pos`, `scd_neg`, `shd`
-4. results (section 7): `replicates`, each observable with its `_err`,
+4. results (OBSERVABLES.md, sections 5–10): `replicates`, each observable with its `_err`,
    `reduced_density`, `tau_rg_tu`, `tau_ree_tu`, `independent_samples`, `drift`
 
 **`analysis/replicates.csv`**: `task_id`, `name`, `physics`, `replicate`, `seed`, `N`,
 `chains`, `frames`, `run_time_h`, each observable with its block error, the diagnostics.
 
-**`analysis/profiles.csv`**: `name`, `physics`, `profile`, `x`, `x_unit`, `value`,
-`value_unit`, `err`, `replicates`.
-
-**`analysis/reanalysed.csv`**, **`reanalysed_profiles.csv`**: like the job files'
+**`analysis/reanalysed.csv`**: like the job files'
 results, for tasks analysed by `analyze` instead of their job.
 
 **`analysis/report.json`**:
@@ -512,8 +505,8 @@ look_at:       drift: ["name (physics)", ...]
 `last_checked`. Written only by `noodle` commands (new, launch, status, analyze), never
 by jobs.
 
-**`exports/<name>/`**: `manifest.csv`, `replicates.csv`, `profiles.csv` (first column
-`run`), `runs.csv`, `physics/<run>.yaml`.
+**`exports/<name>/`**: `manifest.csv`, `replicates.csv` (first column `run`),
+`runs.csv`, `physics/<run>.yaml`.
 
 **`physics.yaml`**: named physics sets. A set may `extends: <other set>` and list only
 what changes. The sets `baseline` (bulk) and `grafted` list every allowed setting.
@@ -524,133 +517,39 @@ each ordered so that every row is as different as possible from the rows above i
 
 ## 6. Sequence descriptors
 
-`src/descriptors.py`, computed at launch with the model's own charges q and
-hydropathies λ (histidine +0.5), following the formulas and column names of the
-group's idp-rg project, so tables join directly.
-
-| column | definition |
-|---|---|
-| `N` | number of residues |
-| `net_charge` | Σ q |
-| `ncpr` | net charge per residue, Σ q / N |
-| `fcr` | fraction of residues with q ≠ 0 (histidine counts) |
-| `f_plus`, `f_minus` | Σ of positive charges / N, Σ of |negative charges| / N |
-| `mean_hydro` | mean λ |
-| `scd` | sequence charge decoration (Sawle & Ghosh 2015): Σ_{i<j} qi qj √(j − i) / N |
-| `scd_pos`, `scd_neg` | s = asinh(5 · scd / N); `scd_pos` = max(s, 0), `scd_neg` = min(s, 0) |
-| `shd` | sequence hydropathy decoration (Zheng et al. 2020): Σ_{i<j} (λi + λj) / (j − i) / N |
-| `kappa` | charge patterning (Das & Pappu 2013), below |
-
-**κ.** For a window ("blob") of g residues, σ = (f+ − f−)² / (f+ + f−), with f± the
-positive and negative charge per residue in the window (0 without charges). δ_g is the
-mean, over every window of g consecutive residues, of (σ_window − σ_sequence)². Then
-
-κ = (δ5 + δ6) / max(δ5 + δ6),
-
-where the maximum is over the most segregated arrangements of the same charges: all
-positive residues in one block, all negative in another, in both orders, the
-histidines (+0.5) at either end of the positive block, and the neutral residues split
-between the two ends (every split near either end) or placed between the blocks.
-κ is 0 for perfectly mixed charges, 1 for fully segregated blocks, empty without
-charges. For ~2% of sequences, mostly with few charges (fcr < 0.2), spreading the
-charges out beats every block arrangement, and κ comes out above 1: it says little
-there. Values agree with idp-rg's to float precision on both shared sequence sets.
+`src/descriptors.py` computes them at launch, from the sequence alone, with the model's
+own charges (histidine +0.5) and hydropathies, and writes them into `manifest.csv`:
+`N`, `net_charge`, `ncpr`, `fcr`, `f_plus`, `f_minus`, `mean_hydro`, `kappa`, `scd`,
+`scd_pos`, `scd_neg`, `shd`. The formulas and column names follow the group's idp-rg
+project, so the tables join directly; the values agree with idp-rg's to float precision
+on both shared sequence sets. Their definitions: OBSERVABLES.md, section 4.
 
 ---
 
 ## 7. Observables and statistics
 
-`src/observables.py`, run by each job on each finished task. Frames are read 50 at a
-time. Each chain is made whole first: the file holds positions wrapped into the
-periodic box, and every bond is shorter than half the box, so each bond vector is its
-minimum-image vector and residue i sits at residue 0 plus the first i bonds. Averages
-are over all production frames and, for a brush, over all chains. Heights are measured
-from the surface plane, z − z_wall (an anchor sits at its contact distance, ~0.5 nm).
-"Contact" between residues i and j means a distance below 1.5 × (σi + σj)/2.
+`src/observables.py` measures each finished task, inside its job, on the compute node,
+from its trajectory (4.5). Every column it writes is defined exactly in
+[OBSERVABLES.md](OBSERVABLES.md), with its error bar (section 8 there), the quality
+checks (section 9) and how replicates are combined into the manifest (section 10).
 
-### 7.1 Every chain
+How the measurement runs:
 
-| column | definition |
-|---|---|
-| `rg_nm`, `rg_sq_nm2` | radius of gyration, mass-weighted: ⟨Rg⟩ and ⟨Rg²⟩; Rg² = trace of the gyration tensor |
-| `rg_sd_nm` | standard deviation of Rg over frames and chains (no error bar of its own) |
-| `rh_nm` | hydrodynamic radius, Kirkwood: 1/Rh = ⟨Σ_{i≠j} 1/r_ij⟩ / N² |
-| `ree_nm`, `ree_sq_nm2` | end-to-end distance ⟨\|R_ee\|⟩ and ⟨R_ee²⟩ |
-| `asphericity` | with gyration moments λ1 ≤ λ2 ≤ λ3: (λ3 − (λ1 + λ2)/2) / Rg². 0 sphere, 0.25 flat disc, 1 rod |
-| `shape_anisotropy` | relative shape anisotropy κ² = 3/2 Σ (λi − Rg²/3)² / Rg⁴. 0 sphere, 0.25 disc, 1 rod |
-| `prolateness` | 27 Π (λi − Rg²/3) / Rg⁶: −0.25 disc (oblate) to 2 rod (prolate) |
-| `transverse_rms_nm` | rms distance of the residues from the line through the two ends |
-| `nu`, `r0_nm` | least-squares fit of log √⟨R_ij²⟩ = log r0 + ν log \|i − j\|, over \|i − j\| ≥ 5 (pairs pooled over frames and chains). 0.5 ideal chain, 0.588 good solvent, 1/3 globule |
-| `bond_cos` | ⟨cos θ⟩ between consecutive bond vectors |
-| `persistence_nm` | Flory's persistence length: R_ee projected on the unit vector of the first bond, and on that of the last bond, averaged |
-| `contacts_per_residue` | contacts with residues of the same chain at least 3 apart along it, per residue |
+- Frames are read 50 at a time, so memory stays small. Each chain is first made whole
+  (its periodic images joined back along its bonds).
+- Every quantity is computed per frame (and per chain), then averaged over the frames
+  (and chains). The per-frame series give the block errors and the quality checks.
+- The pairwise part (Rh, ν, contacts) is O(N²) per chain per frame, done for groups of
+  chains of up to 10⁶ residue pairs at a time (about 50 MB). A brush's contacts between
+  chains use a k-d tree, periodic in x and y.
+- Cost: a 300-residue chain with 3000 frames takes seconds; a 10 x 10 brush with 500
+  frames about half a minute.
 
-### 7.2 Grafted chains and brushes
-
-| column | definition |
-|---|---|
-| `com_height_nm` | height of the chain's centre of mass |
-| `end_height_nm` | height of the free end |
-| `max_height_nm` | height of the chain's highest residue |
-| `height_95_nm` | 95th percentile of the chain's residue heights |
-| `rg_perp_nm`, `rg_par_nm` | √⟨G_zz⟩ and √⟨G_xx + G_yy⟩ of the gyration tensor G |
-| `end_lateral_rms_nm` | √⟨(x, y) distance between free end and anchor, squared⟩ |
-| `tilt_cos` | ⟨cos⟩ of the angle between anchor → free end and the surface normal |
-| `bond_order` | ⟨P2(cos θ)⟩ = ⟨(3 cos² θ − 1)/2⟩ of the bonds with the normal: 1 vertical, 0 random, −0.5 flat |
-| `adsorbed_fraction` | fraction of residues (anchor excluded) below their contact distance + 0.5 nm |
-
-### 7.3 Brushes
-
-| column | definition |
-|---|---|
-| `brush_height_nm` | 2 × mean height of all residues (first moment of the density profile) |
-| `concentration_mg_ml` | mass of the residues below the brush's 95th-percentile height h95, over (box area × h95); 1 Da/nm³ = 1.66054 mg/mL |
-| `interchain_contacts_per_residue` | contacts with residues of other chains, per residue (pairs found with a k-d tree, periodic in x and y) |
-| `lateral_heterogeneity` | the box is cut into a grid of cells one grafting spacing wide; coefficient of variation (sd/mean) of the residue counts. 0 even; larger when chains bundle |
-| `reduced_density` | (manifest only) grafting density × π ⟨Rg²⟩ of the same protein as a single chain, at the same temperature and salt, in the same run: a bulk set, else a single grafted chain; empty without one |
-
-### 7.4 Errors, diagnostics and pooling
-
-- **Block error** (per task). The frame series (for a brush, the chain average per
-  frame) is cut into 10 consecutive blocks; the error is sd(block means) / √10. Blocks
-  much longer than the correlation time behave like independent measurements. For ν
-  and r0: the fit is repeated on each block's distances, and the error is sd / √10.
-  For quantities defined through a square root or an inverse (Rh, `rg_perp_nm`, ...),
-  the error is propagated to first order.
-- **`tau_rg_tu`, `tau_ree_tu`**: integrated autocorrelation times of Rg and of the
-  end-to-end vector, in tu: ½ + Σ of the normalised autocorrelation function (averaged
-  over chains; a vector by its dot product) up to its first negative value, times the
-  time between frames.
-- **`independent_samples`** (per task): frames / (2 τ_Rg in frames), the number of
-  independent Rg values per chain. In the manifest: the total over replicates. Below
-  20, the averages are not trustworthy (`analyze` warns).
-- **`drift`** (per task): 1 if Rg (and, grafted, the centre-of-mass height) differs
-  between the two halves of production by more than 3 combined block errors: the chain
-  was still relaxing. In the manifest: how many replicates drifted.
-- **Pooling replicates** (manifest): each observable is the mean of the replicates'
-  averages; its error is sd / √n with n ≥ 2 replicates, or the replicate's own block
-  error with n = 1. τ's are averaged.
-
-### 7.5 Profiles
-
-| profile | x | value |
-|---|---|---|
-| `internal_distance` | separation \|i − j\|, ~25 log-spaced values | √⟨R_ij²⟩, nm |
-| `bond_correlation` | bonds apart, log-spaced | ⟨cos⟩ between the two bonds |
-| `residue_contacts` | residue index (1 = N-terminus) | its intrachain contacts |
-| `density`, `mass_density`, `charge_density`, `end_density` | grafted: height, bins of 0.25 nm from the surface to the highest occupied bin | residues, mass, charge, free ends per bin volume: brush per nm³ of box (mass in mg/mL); single chain per nm of height (mass in Da/nm) |
-| `residue_height` | grafted: residue index | mean height, nm |
-| `residue_adsorption` | grafted: residue index | probability of touching the surface |
-| `residue_interchain_contacts` | brush: residue index | contacts with other chains |
-
-Pooled over replicates in `analysis/profiles.csv`: the mean, with a height bin a
-replicate never reached counting as 0 for it; `err` = sd / √n (empty for one replicate).
-
-### 7.6 Cost
-
-The pairwise part is O(N²) per chain per frame, done for groups of chains of up to
-10⁶ residue pairs at a time (memory stays near 50 MB). A 300-residue chain with 3000
-frames takes seconds; a 10 x 10 brush with 500 frames about half a minute.
+**Only averages are kept.** Curves (density against height, distance against separation
+along the chain, values per residue) are not computed: for a run of thousands of tasks
+they would be thousands of times larger than the tables, while the trajectories already
+hold everything needed to compute them later, for any task, on any computer
+(OBSERVABLES.md, section 11 shows how).
 
 ---
 
@@ -671,7 +570,7 @@ against its formulas and runs the whole path on short simulations:
   two brushes, run as one job: every task completes with finite positions, anchors
   never move, beads stay between surface and ceiling;
 - analysis: every task analysed in its job, manifest columns per geometry, brush
-  density profiles holding every residue, reduced density.
+  columns filled with sensible values, reduced density.
 
 The observables were also checked against shapes with known answers (straight rod,
 ring, ideal random walk with ν ≈ 0.5, upright grafted rod, regular brush),
@@ -687,6 +586,8 @@ Das & Pappu.
 ### 9.1 Map
 
 ```
+README.md               using it          REFERENCE.md   how it works (this file)
+OBSERVABLES.md          every result column, exactly    CHANGELOG.md   what changed
 noodle                  the command (bash): maps commands to programs, help
 noodle-completion.bash  Tab completion
 setup.sh                builds env/, runs the check, prints the ~/.bashrc lines
@@ -739,14 +640,11 @@ so launch accepts it and reports misspellings. Use it in `src/forcefield.py` or
 **A new observable.** Compute it in `analyse_task` (`src/observables.py`) with the
 `add(name, values)` helper (values per frame and chain) and `average(name, ...)`, add its
 name to the right list (`CHAIN_OBSERVABLES`, `GRAFTED_OBSERVABLES`,
-`BRUSH_OBSERVABLES`: this sets the column order), and describe it at the top of the
-file and in section 7. `analyze` pools it automatically. Tasks analysed before the
+`BRUSH_OBSERVABLES`: this sets the column order), and define it in OBSERVABLES.md
+(and in the list at the top of `src/observables.py`). `analyze` pools it automatically. Tasks analysed before the
 change don't have it: to add it, empty their `analysed_at` cells in the job files (of
 jobs that have finished) and run `noodle analyze`, which re-analyses them into
 `analysis/reanalysed.csv` (their trajectories must still be there).
-
-**A new profile.** Call `profile(name, xs, values, x_unit, value_unit)` in
-`analyse_task`, and add it to section 7.5.
 
 **A new command.** Write `src/<program>.py` beginning with a description (shown by
 `noodle help <command>`), using `run_from_command_line` from `src/runs.py` to get the
@@ -770,7 +668,7 @@ in `src/simulate.py`, the checks in `src/launch_run.py`, `brush_size`/`condition
 - **Model times are not real times** (3.4): compare τ's between tasks only.
 - **Rh** from the Kirkwood formula is an approximation for flexible chains; compare
   trends, not absolute values, with experiments.
-- **κ above 1** for ~2% of sequences (section 6).
+- **κ above 1** for ~2% of sequences (OBSERVABLES.md, section 4).
 - **Linearised surface electrostatics** overestimate the pull above ~1 kT/e surface
   potential; launch warns.
 - **`max_jobs` defaults to 1000**, which fits one job array on most clusters

@@ -13,7 +13,6 @@ overwrite each other's information:
     jobs/submitted.csv           launch_run.py, one line per job it submits
     jobs/job_0007.csv            launch_run.py writes it just before submitting job 7; from
                                  then on only job 7 itself (simulate.py) updates it
-    jobs/job_0007_profiles.csv   job 7, the profiles of each task it analysed
     jobs/job_0007.out            everything job 7 printed
     log.csv                      status.py: every task's current state, merged from jobs/
     analysis/                    analyze_run.py
@@ -188,7 +187,7 @@ def run_from_command_line(usage):
 # ── CSV tables ────────────────────────────────────────────────────────────────
 # Columns that always hold text, even when a value looks like a number (a protein named 171)
 TEXT_COLUMNS = {"name", "description", "sequence_name", "sequence", "physics", "error", "analysis_error", "run",
-                "slurm_job", "profile", "x_unit", "value_unit"}
+                "slurm_job"}
 
 
 def read_csv(path):
@@ -264,10 +263,6 @@ JOB_COLUMNS = ["task_id", "sequence_name", "physics", "replicate", "N", "chains"
 
 def job_file(run_dir, job):
     return run_dir / "jobs" / f"job_{job:04d}.csv"
-
-
-def profiles_file(run_dir, job):
-    return run_dir / "jobs" / f"job_{job:04d}_profiles.csv"
 
 
 def job_numbers(run_dir):

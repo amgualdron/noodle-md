@@ -23,7 +23,8 @@ You only type short commands and fill in one settings file. No programming neede
 | [6. Good to know](#6-good-to-know) | time limits, stopping, disk space |
 | [7. If something goes wrong](#7-if-something-goes-wrong) | common messages and fixes |
 
-**How it works in detail**, every formula and every file: [REFERENCE.md](REFERENCE.md).
+**How it works in detail**: [REFERENCE.md](REFERENCE.md). **What every result column
+means**, exactly: [OBSERVABLES.md](OBSERVABLES.md).
 
 ---
 
@@ -226,7 +227,6 @@ brush runs. The launch shows the cost before you agree.
 |---|---|
 | **`manifest.csv`** | **the main result**: one row per protein and physics set |
 | `analysis/replicates.csv` | the same, one row per task, to see how much copies differ |
-| `analysis/profiles.csv` | curves, e.g. how density changes with height above the surface |
 | `analysis/report.json` | a summary, and which rows to be careful with |
 
 All are ordinary tables: open them in Excel, LibreOffice or Python. Each row of
@@ -248,8 +248,14 @@ each with its uncertainty in the column ending in `_err`. The ones most people w
 | `independent_samples` | quality check: **below 20, the simulation was too short to trust** |
 | `drift` | quality check: should be 0 (otherwise still changing at the end) |
 
-Every column is defined in [REFERENCE.md](REFERENCE.md#7-observables-and-statistics).
-`noodle analyze` also warns you about rows with poor quality checks.
+Every column is defined exactly in **[OBSERVABLES.md](OBSERVABLES.md)**. `noodle analyze`
+also warns you about rows with poor quality checks.
+
+**Curves** (for example how the density of a brush changes with height) are not
+computed on the cluster, because thousands of them would take far more space than the
+tables. Compute them afterwards from the simulation files (`trajectories/`), on any
+computer: [OBSERVABLES.md](OBSERVABLES.md#11-computing-other-quantities-from-the-trajectories)
+shows how, with examples.
 
 ---
 
@@ -266,8 +272,9 @@ Every column is defined in [REFERENCE.md](REFERENCE.md#7-observables-and-statist
   doesn't change it (except the cluster settings). For something different, make a
   new run.
 - **Many runs at once** are fine; they never interfere.
-- **Disk space.** The simulation files (`trajectories/`) are large. When a run is done
-  and analysed, copy `runs/<name>/trajectories/` to the group storage (NAS), then
+- **Disk space.** The simulation files (`trajectories/`) are large, and you need them for
+  anything beyond the tables. When a run is done and analysed, copy
+  `runs/<name>/trajectories/` to the group storage (NAS), then
   `noodle clean <run>` deletes them from the cluster and keeps all results. It asks
   you to type the run's name first.
 - **Updating the code:** `git pull` (your runs are never touched). See `CHANGELOG.md`

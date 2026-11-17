@@ -44,8 +44,8 @@ import yaml
 from forcefield import (AA_PARAMS, AMINO_ACIDS, residue_pair_forces, thermal_energy,
                         wall_contact_distance, wall_forces)
 from observables import analyse_task
-from runs import (brush_size, checkpoint_path, profiles_file, read_csv, read_job, read_tasks, run_lengths,
-                  trajectory_path, write_csv, write_job)
+from runs import (brush_size, checkpoint_path, read_job, read_tasks, run_lengths, trajectory_path,
+                  write_job)
 
 REPORT_EVERY_HOURS = 1     # how often to print progress, update the log and save a checkpoint
 FIRST_REPORT_SECONDS = 60  # one early report, so you can see the speed right away
@@ -351,16 +351,13 @@ def run_task(run_dir, task, physics, row, update):
 
 
 def analyse(run_dir, job, task, physics, row, update):
-    """Measure what the finished task's trajectory shows (observables.py): the averages go
-    into its row of the job file, the profiles into jobs/job_0007_profiles.csv."""
+    """Measure what the finished task's trajectory shows (observables.py) and write the
+    averages into its row of the job file."""
     sequence = task["sequence"]
     save_every = run_lengths(physics, len(sequence))[2]
     started = time.monotonic()
-    averages, profiles = analyse_task(trajectory_path(run_dir, task), sequence, physics,
-                                      system_geometry(sequence, physics), save_every * physics["dt"])
-    path = profiles_file(run_dir, job)
-    others = [r for r in read_csv(path) if r["task_id"] != task["task_id"]] if path.exists() else []
-    write_csv(others + [dict(task_id=task["task_id"], **r) for r in profiles], path)
+    averages = analyse_task(trajectory_path(run_dir, task), sequence, physics,
+                            system_geometry(sequence, physics), save_every * physics["dt"])
     update(row, analysed_at=now(), analysis_error=None, **averages)
     print(f"Analysed in {time.monotonic() - started:.0f} s: Rg {averages['rg_nm']:.2f} nm, "
           f"{averages['independent_samples']:.0f} independent samples", flush=True)

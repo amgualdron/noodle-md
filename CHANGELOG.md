@@ -22,8 +22,8 @@ with a different run layout: finish them with the version that launched them
 
 - **Every task is analysed by its own job, right after it finishes** (`src/observables.py`;
   seconds for a chain, about half a minute for a brush). Averages, each with a
-  block-average error bar (`<name>_err`), go into the task's row of its job file; profiles
-  go into `jobs/job_0007_profiles.csv`. Lengths in nm, times in model units (tu).
+  block-average error bar (`<name>_err`), go into the task's row of its job file.
+  Lengths in nm, times in model units (tu). Every column is defined in `OBSERVABLES.md`.
   - every chain: `rg_nm`, `rg_sq_nm2`, `rg_sd_nm`, `rh_nm` (Kirkwood), `ree_nm`,
     `ree_sq_nm2`, `asphericity`, `shape_anisotropy` (relative shape anisotropy kappa^2,
     not the sequence kappa), `prolateness`, `transverse_rms_nm`, `nu` and `r0_nm`
@@ -37,9 +37,6 @@ with a different run layout: finish them with the version that launched them
     manifest, `reduced_density` (grafting density x pi <Rg^2> of the same protein as a
     single chain in the same run)
   - diagnostics: `tau_rg_tu`, `tau_ree_tu`, `independent_samples`, `drift`
-  - profiles: `internal_distance`, `bond_correlation`, `residue_contacts`; grafted:
-    `density`, `mass_density`, `charge_density`, `end_density` (vs height),
-    `residue_height`, `residue_adsorption`; brushes: `residue_interchain_contacts`
   Checked on shapes with known answers (rod, ring, random walk, upright grafted rod,
   synthetic brush), interchain contacts against brute force, and Rg, kappa^2 and Ree
   against MDAnalysis on simulated trajectories (identical).
@@ -60,7 +57,7 @@ with a different run layout: finish them with the version that launched them
   printing two lines to add to `~/.bashrc`: an alias, so `noodle` works from any folder,
   and the line that loads the completion.
 - `./noodle export <run> [<run> ...]`: brings each run's analysis up to date, then writes
-  `exports/<name>/` with the runs' `manifest.csv`, `replicates.csv` and `profiles.csv`
+  `exports/<name>/` with the runs' `manifest.csv` and `replicates.csv`
   merged (first column `run`), their rows of `runs.csv`, and `physics/<run>.yaml`. One
   run: named after it; several: it asks, suggesting the common part of their names. Warns
   about unfinished runs and about a physics set name with different settings in different
@@ -74,14 +71,23 @@ with a different run layout: finish them with the version that launched them
 - README rewritten short and plain, for users with no software background: setup,
   a first run in six steps, the commands, the physics sets, the main result columns,
   and fixes for common problems. `src/run_template.yaml` explains the per-job time limit.
-- New `REFERENCE.md`: the model, the pipeline step by step, every file and column,
-  the formulas of every descriptor and observable, how it is checked, the code's rules,
-  how to extend it, and the open items.
+- New `REFERENCE.md`: the model, the pipeline step by step, every file and column, how
+  it is checked, the code's rules, how to extend it, and the open items.
+- New `OBSERVABLES.md`: the exact definition of every column of `manifest.csv` and
+  `analysis/replicates.csv` (descriptors, observables, error bars, quality checks, how
+  replicates are combined), and how to compute anything else, such as curves, from the
+  trajectories, with tested examples.
+- **No more profiles (curves).** Density against height, distances against separation
+  and per-residue values are no longer computed or saved: an 18-task test already wrote
+  ~11,000 rows of them, and a run of thousands of tasks would write millions. The
+  trajectories hold everything needed to compute them afterwards, on any computer
+  (`OBSERVABLES.md`, section 11). Gone: `jobs/job_NNNN_profiles.csv`,
+  `analysis/profiles.csv`, `analysis/reanalysed_profiles.csv`, and `profiles.csv` in
+  exports. `noodle analyze` no longer needs pandas.
 - `./noodle check` runs its test simulations as one job and checks the new tables
-  (in-job analysis, manifest columns per geometry, brush density profiles, reduced density).
+  (in-job analysis, manifest columns per geometry, brush columns, reduced density).
 - **`./noodle analyze` pools instead of recomputing**: it gathers the job files into
-  `analysis/replicates.csv` (one row per task), `analysis/profiles.csv` (each profile
-  averaged over replicates, with `err`) and `analysis/report.json` (counts, the range of
+  `analysis/replicates.csv` (one row per task) and `analysis/report.json` (counts, the range of
   each observable per physics set, rows that drift or have fewer than 20 independent
   samples, tasks that could not be analysed), and fills the results columns of
   `manifest.csv`: `replicates`, then every observable averaged over replicates, with the

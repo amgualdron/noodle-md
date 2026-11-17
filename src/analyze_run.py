@@ -1,29 +1,26 @@
 """./noodle analyze <run name>  --  pool the results of every finished task into tables.
 
-Every job measures each of its tasks as soon as it finishes (observables.py, where every
-column is explained): the averages go into the task's row of its job file, the profiles
-into jobs/job_0007_profiles.csv. This command gathers them, so it takes seconds and can be
-rerun at any time while a run is going:
+Every job measures each of its tasks as soon as it finishes (observables.py; every column
+is defined in OBSERVABLES.md): the averages go into the task's row of its job file. This
+command gathers them, so it takes seconds and can be rerun at any time while a run is going:
 
     analysis/replicates.csv  one row per analysed task (replicate): every observable, with an
                              error bar from block averaging of its own frames
-    analysis/profiles.csv    the profiles of each protein and physics set, averaged over replicates
     analysis/report.json     how many tasks are analysed, the range of each observable per
                              physics set, and the rows worth a look (drift, too few samples)
     manifest.csv             its results columns: replicates, then every observable averaged
                              over the replicates (the columns written at launch stay as they are)
 
-Error bars (<name>_err) in the manifest and in profiles.csv: the standard error of the mean
-over replicates (their standard deviation / sqrt(replicates)) when there are 2 or more;
-with a single replicate, its own block-average error (manifest) or none (profiles).
+Error bars (<name>_err) in the manifest: the standard error of the mean over replicates
+(their standard deviation / sqrt(replicates)) when there are 2 or more; with a single
+replicate, its own block-average error.
 
 The diagnostics, in the manifest: tau_rg_tu and tau_ree_tu are averaged over replicates,
 independent_samples is their total (the independent Rg values behind the average, per
 chain) and drift counts the replicates that were still drifting.
 
 A completed task its job could not analyse (analysis_error in the job file) is analysed
-here instead, from its trajectory, into analysis/reanalysed.csv and
-analysis/reanalysed_profiles.csv.
+here instead, from its trajectory, into analysis/reanalysed.csv.
 """
 
 import json
@@ -31,11 +28,10 @@ import math
 from datetime import datetime
 
 import numpy as np
-import pandas as pd
 import yaml
 
 from observables import DIAGNOSTICS, OBSERVABLES, analyse_task
-from runs import (job_numbers, profiles_file, read_csv, read_tasks, refresh_registry, run_from_command_line,
+from runs import (read_csv, read_tasks, refresh_registry, run_from_command_line,
                   run_lengths, task_states, trajectory_path, write_csv)
 
 FEW_SAMPLES = 20  # fewer independent samples than this (all replicates together): too short to trust
@@ -45,16 +41,14 @@ SHOWN = 5         # rows named per warning on screen (report.json names them all
 # ── Gathering the per-task results ────────────────────────────────────────────
 def reanalyse(run_dir, tasks, physics, to_do):
     """Analyse here the completed tasks in `to_do` that their job could not analyse, and
-    add them to analysis/reanalysed.csv and reanalysed_profiles.csv. Returns {task id: error}
+    add them to analysis/reanalysed.csv. Returns {task id: error}
     of the ones that failed again."""
     print(f"  {len(to_do)} finished task(s) were not analysed by their job: analysing them here. "
           "Loading HOOMD first can take a minute.", flush=True)
     from simulate import system_geometry  # imports HOOMD, so only when needed
 
     averages_path = run_dir / "analysis" / "reanalysed.csv"
-    profiles_path = run_dir / "analysis" / "reanalysed_profiles.csv"
     averages = read_csv(averages_path) if averages_path.exists() else []
-    profiles = read_csv(profiles_path) if profiles_path.exists() else []
     errors = {}
     for task_id in to_do:
         task = tasks[task_id]
@@ -66,21 +60,19 @@ def reanalyse(run_dir, tasks, physics, to_do):
         print(f"  analysing task {task_id} ({task['sequence_name']}, {task['physics']}) ...", flush=True)
         try:
             frame_time = run_lengths(p, len(sequence))[2] * p["dt"]
-            result, rows = analyse_task(trajectory, sequence, p, system_geometry(sequence, p), frame_time)
+            result = analyse_task(trajectory, sequence, p, system_geometry(sequence, p), frame_time)
         except Exception as error:
             errors[task_id] = f"{type(error).__name__}: {error}"
             continue
         averages.append(dict(task_id=task_id, analysed_at=datetime.now().isoformat(timespec="seconds"), **result))
-        profiles += [dict(task_id=task_id, **row) for row in rows]
     if averages:
         write_csv(averages, averages_path)
-        write_csv(profiles, profiles_path)
     return errors
 
 
 def gather(run_dir, tasks, states, physics):
-    """(results, profiles, errors): every analysed task's averages {task id: {column: value}}
-    and profile rows, and {task id: error} of completed tasks that could not be analysed."""
+    """(results, errors): every analysed task's averages {task id: {column: value}}, and
+    {task id: error} of completed tasks that could not be analysed."""
     completed = [i for i, state in states.items() if state["status"] == "completed"]
     results = {i: states[i] for i in completed if states[i].get("analysed_at")}
 
@@ -91,11 +83,7 @@ def gather(run_dir, tasks, states, physics):
     if reanalysed_path.exists():
         results.update({row["task_id"]: row for row in read_csv(reanalysed_path) if row["task_id"] not in results})
 
-    files = [profiles_file(run_dir, job) for job in job_numbers(run_dir)] + [run_dir / "analysis" / "reanalysed_profiles.csv"]
-    tables = [pd.read_csv(path) for path in files if path.exists()]
-    profiles = pd.concat(tables) if tables else pd.DataFrame(columns=["task_id", "profile", "x", "x_unit", "value", "value_unit"])
-    profiles = profiles[profiles["task_id"].isin(results)].drop_duplicates(["task_id", "profile", "x"], keep="last")
-    return results, profiles, errors
+    return results, errors
 
 
 # ── Pooling the replicates ────────────────────────────────────────────────────
@@ -173,27 +161,6 @@ def update_manifest(run_dir, replicates):
     return rows
 
 
-def pool_profiles(profiles, tasks, replicates):
-    """analysis/profiles.csv: each profile averaged over the replicates of its protein and
-    physics set. A height bin that one replicate never reached counts as 0 for it."""
-    if profiles.empty:
-        return []
-    table = profiles.copy()
-    table["name"] = [tasks[i]["sequence_name"] for i in table["task_id"]]
-    table["physics"] = [tasks[i]["physics"] for i in table["task_id"]]
-    table["value_sq"] = table["value"] ** 2
-    keys = ["name", "physics", "profile", "x", "x_unit", "value_unit"]
-    sums = table.groupby(keys, sort=False)[["value", "value_sq"]].sum().reset_index()
-    count = pd.DataFrame([(name, p, n) for (name, p), n in replicates.items()],
-                         columns=["name", "physics", "replicates"])
-    sums = sums.merge(count, on=["name", "physics"], how="left")
-    n = sums["replicates"]
-    mean = sums["value"] / n
-    variance = (sums["value_sq"] - n * mean ** 2).clip(lower=0) / (n - 1).where(n > 1)
-    sums["value"], sums["err"] = mean, np.sqrt(variance / n)
-    return sums[["name", "physics", "profile", "x", "x_unit", "value", "value_unit", "err", "replicates"]].to_dict("records")
-
-
 # ── The report ────────────────────────────────────────────────────────────────
 def clean_number(value):
     """A number for JSON: 4 significant digits, NaN as null."""
@@ -258,19 +225,17 @@ def analyze(run_dir):
     print(f"Gathering the results of {run_dir.name} ({len(tasks)} tasks) ...", flush=True)
     physics = yaml.safe_load((run_dir / "physics.yaml").read_text())
     states = task_states(run_dir)
-    results, profiles, errors = gather(run_dir, tasks, states, physics)
+    results, errors = gather(run_dir, tasks, states, physics)
 
     replicates = replicate_rows(tasks, results)
     write_csv(replicates, run_dir / "analysis" / "replicates.csv")
     manifest = update_manifest(run_dir, replicates)
-    counts = {(r["name"], r["physics"]): r["replicates"] for r in manifest if r["replicates"]}
-    write_csv(pool_profiles(profiles, tasks, counts), run_dir / "analysis" / "profiles.csv")
     report = build_report(run_dir, tasks, states, results, errors, manifest)
     (run_dir / "analysis" / "report.json").write_text(json.dumps(report, indent=2) + "\n")
 
     refresh_registry(run_dir, states)
     print_report(report)
-    print(f"  -> manifest.csv, analysis/replicates.csv, analysis/profiles.csv, analysis/report.json")
+    print(f"  -> manifest.csv, analysis/replicates.csv, analysis/report.json")
     return set(results)
 
 

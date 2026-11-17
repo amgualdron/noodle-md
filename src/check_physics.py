@@ -17,14 +17,12 @@ from pathlib import Path
 import gsd.hoomd
 import hoomd
 import numpy as np
-import pandas as pd
 import yaml
 
 from analyze_run import analyze
 from forcefield import (AA_PARAMS, AMINO_ACIDS, debye_huckel, residue_pair_forces, thermal_energy,
                         wall_contact_distance, wall_forces)
 from launch_run import resolve_physics, write_jobs, write_manifest
-from observables import PROFILE_BIN
 from runs import ROOT, brush_size, read_csv, read_tasks, task_states, trajectory_path
 from simulate import system_geometry
 
@@ -229,13 +227,13 @@ def main():
         check("heights only for grafted chains, brush columns only for brushes",
               all((row["com_height_nm"] is None) == (row["geometry"] == "bulk")
                   and (row["brush_height_nm"] is None) == (row["chains"] == 1) for row in manifest.values()))
-        profiles = pd.read_csv(run_dir / "analysis" / "profiles.csv")
         for name in ("brush", "brush_dense_C_terminus"):
-            chains, width = brush_size(sets[name])
-            density = profiles[(profiles["physics"] == name) & (profiles["profile"] == "density")]
-            residues = density["value"].sum() * PROFILE_BIN * width**2
-            check(f"{name}: the density profile holds all {chains} x {len(sequence)} residues ({residues:.1f})",
-                  abs(residues / (chains * len(sequence)) - 1) < 1e-3)  # the files keep 6 digits
+            row = manifest[name]
+            check(f"{name}: brush height, concentration and lateral heterogeneity are positive, "
+                  "interchain contacts are not negative",
+                  all((row[c] or 0) > 0 for c in ("brush_height_nm", "concentration_mg_ml", "lateral_heterogeneity"))
+                  and row["interchain_contacts_per_residue"] is not None
+                  and row["interchain_contacts_per_residue"] >= 0)
         check("brush: reduced density = grafting density x pi <Rg^2> of the free chain",
               math.isclose(manifest["brush"]["reduced_density"],
                            sets["brush"]["grafting_density"] * math.pi * manifest["bulk"]["rg_sq_nm2"], rel_tol=1e-4))
