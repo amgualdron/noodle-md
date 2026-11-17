@@ -104,6 +104,18 @@ brush_charged:
   description: "10 x 10 brush of N-terminally grafted chains, 0.05 chains/nm^2, surface -0.1 e/nm^2"
   wall_charge_density: -0.1
 
+# ── Run-length test: how long a production is really needed ──────────────────
+# A grafted chain with a production ~3.7x shorter than `grafted` (6 instead of 22,
+# equilibration unchanged). Run it on varied proteins (e.g. rows: 1-50, replicates: 1,
+# max_residues: 200), then check in the manifest that independent_samples stays at 50 or
+# more and drift at 0. tau_rg_tu / N^2.2 gives c, and a production_multiplier of
+# 2 x c x (independent samples wanted) is enough for that sample count.
+length_test:
+  extends: grafted
+  description: "Run-length test: grafted chain, production_multiplier 6, 1500 frames"
+  production_multiplier: 6
+  frames: 1500
+
 # ── Quick tests: tiny fixed-length runs, NOT physically meaningful ────────────
 test_bulk:
   extends: baseline
