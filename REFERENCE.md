@@ -597,7 +597,8 @@ src/simulate.py         the job runner: build, run, checkpoint, stop, analyse
 src/observables.py      the analysis of one trajectory
 src/descriptors.py      sequence descriptors
 src/runs.py             shared helpers: CSV reading/writing, tasks and jobs, run numbers,
-                        choosing a run, physics conditions, run lengths, time estimates, SLURM queue
+                        choosing a run, physics conditions, run lengths, time estimates, SLURM queue,
+                        the names of the result columns
 src/launch_run.py       noodle launch: checks, plan, tasks, manifest, jobs, submission
 src/status.py           noodle status (and log.csv)
 src/analyze_run.py      noodle analyze
@@ -639,9 +640,10 @@ so launch accepts it and reports misspellings. Use it in `src/forcefield.py` or
 
 **A new observable.** Compute it in `analyse_task` (`src/observables.py`) with the
 `add(name, values)` helper (values per frame and chain) and `average(name, ...)`, add its
-name to the right list (`CHAIN_OBSERVABLES`, `GRAFTED_OBSERVABLES`,
-`BRUSH_OBSERVABLES`: this sets the column order), and define it in OBSERVABLES.md
-(and in the list at the top of `src/observables.py`). `analyze` pools it automatically. Tasks analysed before the
+name to the right list in `src/runs.py` (`CHAIN_OBSERVABLES`, `GRAFTED_OBSERVABLES`,
+`BRUSH_OBSERVABLES`: this sets the column order; they live there so that `analyze` and
+`export` never load numpy), and define it in OBSERVABLES.md (and in the list at the top
+of `src/observables.py`). `analyze` pools it automatically. Tasks analysed before the
 change don't have it: to add it, empty their `analysed_at` cells in the job files (of
 jobs that have finished) and run `noodle analyze`, which re-analyses them into
 `analysis/reanalysed.csv` (their trajectories must still be there).

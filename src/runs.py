@@ -253,6 +253,21 @@ JOB_COLUMNS = ["task_id", "sequence_name", "physics", "replicate", "N", "chains"
                "step", "total_steps", "steps_per_second", "run_time_s", "attempts", "frames", "host",
                "started_at", "last_update", "completed_at", "stop_reason", "error", "analysed_at",
                "analysis_error"]
+# The analysis results that follow them (observables.py computes them; OBSERVABLES.md
+# defines them), in the order of the tables. Every observable also has an <name>_err
+# column. They are listed here, not in observables.py, so that commands which only read
+# results (analyze, export, clean) don't have to load numpy and scipy: from a cluster's
+# shared filesystem, that alone can take half a minute.
+CHAIN_OBSERVABLES = ["rg_nm", "rg_sq_nm2", "rg_sd_nm", "rh_nm", "ree_nm", "ree_sq_nm2", "asphericity",
+                     "shape_anisotropy", "prolateness", "transverse_rms_nm", "nu", "r0_nm", "bond_cos",
+                     "persistence_nm", "contacts_per_residue"]
+GRAFTED_OBSERVABLES = ["com_height_nm", "end_height_nm", "max_height_nm", "height_95_nm", "rg_perp_nm",
+                       "rg_par_nm", "end_lateral_rms_nm", "tilt_cos", "bond_order", "adsorbed_fraction"]
+BRUSH_OBSERVABLES = ["brush_height_nm", "concentration_mg_ml", "interchain_contacts_per_residue",
+                     "lateral_heterogeneity"]
+OBSERVABLES = CHAIN_OBSERVABLES + GRAFTED_OBSERVABLES + BRUSH_OBSERVABLES
+DIAGNOSTICS = ["tau_rg_tu", "tau_ree_tu", "independent_samples", "drift"]
+
 # status of a task in a job file:
 #   submitted  in a job that has not reached it yet
 #   running    running now (or the job died without saying so: ./noodle status tells)

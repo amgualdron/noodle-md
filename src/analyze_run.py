@@ -25,13 +25,12 @@ here instead, from its trajectory, into analysis/reanalysed.csv.
 
 import json
 import math
+import statistics
 from datetime import datetime
 
-import numpy as np
 import yaml
 
-from observables import DIAGNOSTICS, OBSERVABLES, analyse_task
-from runs import (read_csv, read_tasks, refresh_registry, run_from_command_line,
+from runs import (DIAGNOSTICS, OBSERVABLES, read_csv, read_tasks, refresh_registry, run_from_command_line,
                   run_lengths, task_states, trajectory_path, write_csv)
 
 FEW_SAMPLES = 20  # fewer independent samples than this (all replicates together): too short to trust
@@ -45,7 +44,8 @@ def reanalyse(run_dir, tasks, physics, to_do):
     of the ones that failed again."""
     print(f"  {len(to_do)} finished task(s) were not analysed by their job: analysing them here. "
           "Loading HOOMD first can take a minute.", flush=True)
-    from simulate import system_geometry  # imports HOOMD, so only when needed
+    from observables import analyse_task  # numpy, scipy and HOOMD: only when needed
+    from simulate import system_geometry
 
     averages_path = run_dir / "analysis" / "reanalysed.csv"
     averages = read_csv(averages_path) if averages_path.exists() else []
@@ -105,17 +105,17 @@ def pooled(replicates):
     """{column: value} of one protein and physics set from the rows of its replicates."""
     row = {"replicates": len(replicates)}
     for name in OBSERVABLES:
-        values = np.array([r[name] for r in replicates if r[name] is not None], dtype=float)
+        values = [r[name] for r in replicates if r[name] is not None]
         if len(values) == 0:
             row[name] = row[f"{name}_err"] = None
         elif len(values) == 1:
             row[name], row[f"{name}_err"] = values[0], next(r[f"{name}_err"] for r in replicates if r[name] is not None)
         else:
-            row[name], row[f"{name}_err"] = values.mean(), values.std(ddof=1) / math.sqrt(len(values))
+            row[name], row[f"{name}_err"] = statistics.fmean(values), statistics.stdev(values) / math.sqrt(len(values))
     def values(column):
         return [r[column] for r in replicates if r[column] is not None and not math.isnan(r[column])]
-    row["tau_rg_tu"] = np.mean(values("tau_rg_tu")) if values("tau_rg_tu") else None
-    row["tau_ree_tu"] = np.mean(values("tau_ree_tu")) if values("tau_ree_tu") else None
+    row["tau_rg_tu"] = statistics.fmean(values("tau_rg_tu")) if values("tau_rg_tu") else None
+    row["tau_ree_tu"] = statistics.fmean(values("tau_ree_tu")) if values("tau_ree_tu") else None
     row["independent_samples"] = sum(values("independent_samples")) if values("independent_samples") else None
     row["drift"] = int(sum(values("drift")))
     return row
@@ -181,7 +181,7 @@ def build_report(run_dir, tasks, states, results, errors, manifest):
         for column in OBSERVABLES + ["reduced_density"]:
             values = [r[column] for r in done if r.get(column) is not None and not math.isnan(r[column])]
             if values:
-                observables[column] = dict(min=clean_number(min(values)), median=clean_number(float(np.median(values))),
+                observables[column] = dict(min=clean_number(min(values)), median=clean_number(statistics.median(values)),
                                            max=clean_number(max(values)))
         spread[name] = dict(rows=len(rows), analysed_rows=len(done), observables=observables)
     label = lambda r: f"{r['name']} ({r['physics']})"

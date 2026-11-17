@@ -134,6 +134,11 @@ with a different run layout: finish them with the version that launched them
   without needing it. HOOMD is now loaded only where forces are built (`forcefield.py`),
   so these commands start in about a second. `analyze` says what it is doing from its
   first line, and warns before loading HOOMD to re-analyse tasks their job didn't.
+- `noodle analyze`, `export` and `clean` no longer load numpy, scipy or gsd either (about
+  130 Python modules instead of 580), which took up to half a minute on the cluster's
+  shared filesystem. The result column names moved from `observables.py` to `runs.py`,
+  and the replicates are pooled with Python's `statistics` module (same numbers). The
+  analysis code is loaded only to re-analyse a task its job didn't.
 - `./noodle status` no longer crashes on a task in its first minute (no run time yet).
 - On your own computer, the tasks waiting in a running job show as waiting, not stopped.
 - Replicates of the same protein under the same physics set always get different

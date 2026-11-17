@@ -30,6 +30,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from forcefield import AA_PARAMS, wall_contact_distance
+from runs import DIAGNOSTICS, OBSERVABLES
 
 BLOCKS = 10               # blocks for the error bars (and for nu's error bar)
 CHUNK_FRAMES = 50         # frames read from the trajectory at a time (keeps memory small)
@@ -38,17 +39,6 @@ ADSORBED_MARGIN = 0.5     # nm: a residue touches the surface within its contact
 NU_MIN_SEPARATION = 5     # nu is fitted for |i - j| >= this
 PAIRS_AT_ONCE = 1_000_000  # residue pairs held in memory at once (~8 MB per array)
 MG_ML_PER_DALTON_NM3 = 1.66054  # 1 dalton per nm^3 is 1.66054 mg/mL
-
-# The columns, in the order of the tables. Every observable also has an <name>_err column.
-CHAIN_OBSERVABLES = ["rg_nm", "rg_sq_nm2", "rg_sd_nm", "rh_nm", "ree_nm", "ree_sq_nm2", "asphericity",
-                     "shape_anisotropy", "prolateness", "transverse_rms_nm", "nu", "r0_nm", "bond_cos",
-                     "persistence_nm", "contacts_per_residue"]
-GRAFTED_OBSERVABLES = ["com_height_nm", "end_height_nm", "max_height_nm", "height_95_nm", "rg_perp_nm",
-                       "rg_par_nm", "end_lateral_rms_nm", "tilt_cos", "bond_order", "adsorbed_fraction"]
-BRUSH_OBSERVABLES = ["brush_height_nm", "concentration_mg_ml", "interchain_contacts_per_residue",
-                     "lateral_heterogeneity"]
-OBSERVABLES = CHAIN_OBSERVABLES + GRAFTED_OBSERVABLES + BRUSH_OBSERVABLES
-DIAGNOSTICS = ["tau_rg_tu", "tau_ree_tu", "independent_samples", "drift"]
 
 
 # ── Small statistics ──────────────────────────────────────────────────────────
