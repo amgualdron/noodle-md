@@ -65,6 +65,13 @@ with a different run layout: finish them with the version that launched them
 - scipy is listed in `src/environment.yml` (it was already installed through MDAnalysis).
 
 ### Changed
+- The shared sequence sets (`human_idrs_12k.csv`, `mobidb_idps_15k.csv`) carry the standard
+  sequence descriptors `N`, `net_charge`, `ncpr`, `fcr`, `f_plus`, `f_minus`, `mean_hydro`,
+  `kappa`, `scd`, `shd`, computed with `src/descriptors.py`, the same code as the
+  manifest. The engineered Rg-prediction features are gone (`scd_pos`, `scd_neg`,
+  `contact_energy`, `patch_neg`, `patch_neu`, `frac_sticky`, `log_seq_length`,
+  `radius_at_pick`). Rows, ids and sequences are unchanged, so `rows:` picks the same
+  proteins as before. `scd_pos` and `scd_neg` are also gone from `manifest.csv`.
 - Shorter productions, from a measurement of relaxation times (REFERENCE.md, section 3.6):
   grafted chains `production_multiplier` 22 -> 8 and `frames` 3000 -> 2000 (still at
   least 64 independent Rg samples per protein); bulk (`baseline`) 22 -> 6, provisional

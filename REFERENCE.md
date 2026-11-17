@@ -514,7 +514,7 @@ Tables are plain CSV: numbers with 6 significant digits, empty cells for "none" 
    `wall_charge_density`, `wall_attraction`, `grafting_density` (grafted only),
    `chains`
 3. descriptors (OBSERVABLES.md, section 4): `N`, `net_charge`, `ncpr`, `fcr`, `f_plus`, `f_minus`,
-   `mean_hydro`, `kappa`, `scd`, `scd_pos`, `scd_neg`, `shd`
+   `mean_hydro`, `kappa`, `scd`, `shd`
 4. results (OBSERVABLES.md, sections 5–10): `replicates`, each observable with its `_err`,
    `reduced_density`, `tau_rg_tu`, `tau_ree_tu`, `independent_samples`, `drift`
 
@@ -550,6 +550,12 @@ by jobs.
 what changes. The sets `baseline` (bulk) and `grafted` list every allowed setting.
 **`sequences/`**: the shared sequence sets (`human_idrs_12k.csv`, `mobidb_idps_15k.csv`),
 each ordered so that every row is as different as possible from the rows above it.
+Next to the sequence and where it comes from (`pick` is the row's place in that order),
+each row has the descriptors of section 6, computed with
+`src/descriptors.py`, so they equal the manifest's. The engineered features the order was
+originally picked with (`scd_pos`, `scd_neg`, `contact_energy`, `patch_neg`, `patch_neu`,
+`frac_sticky`, `log_seq_length`, `radius_at_pick`) were removed: they were built to
+predict Rg, not to describe sequences. The row order is unchanged.
 
 ---
 
@@ -558,7 +564,7 @@ each ordered so that every row is as different as possible from the rows above i
 `src/descriptors.py` computes them at launch, from the sequence alone, with the model's
 own charges (histidine +0.5) and hydropathies, and writes them into `manifest.csv`:
 `N`, `net_charge`, `ncpr`, `fcr`, `f_plus`, `f_minus`, `mean_hydro`, `kappa`, `scd`,
-`scd_pos`, `scd_neg`, `shd`. The formulas and column names follow the group's idp-rg
+`shd`. The formulas and column names follow the group's idp-rg
 project, so the tables join directly; the values agree with idp-rg's to float precision
 on both shared sequence sets. Their definitions: OBSERVABLES.md, section 4.
 

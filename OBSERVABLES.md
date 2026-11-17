@@ -121,7 +121,6 @@ hydrophilic, 1 = most hydrophobic).
 | `f_minus` | negative charge per residue | Σ of \|qᵢ\| over the negative qᵢ / N |
 | `mean_hydro` | mean hydropathy | Σᵢ λᵢ / N |
 | `scd` | sequence charge decoration (Sawle & Ghosh 2015): how strongly the charges' pattern favours compaction (negative) or expansion (positive) | Σ over i < j of qᵢ qⱼ √(j − i), divided by N |
-| `scd_pos`, `scd_neg` | `scd` per residue, compressed and split by sign | s = asinh(5 · scd / N); `scd_pos` = max(s, 0), `scd_neg` = min(s, 0) |
 | `shd` | sequence hydropathy decoration (Zheng et al. 2020): how hydrophobic residues close along the chain are | Σ over i < j of (λᵢ + λⱼ) / (j − i), divided by N |
 | `kappa` | charge patterning κ (Das & Pappu 2013): 0 = positive and negative charges well mixed, 1 = in separate blocks | below |
 

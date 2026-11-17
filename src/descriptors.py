@@ -18,7 +18,6 @@ as the group's idp-rg project, so the tables can be joined directly.
                      beats any block arrangement and kappa comes out above 1: there it says little.
     scd              sequence charge decoration, sum over i < j of q_i q_j |i - j|^(1/2), divided by N
                      (Sawle & Ghosh 2015): negative when opposite charges sit in blocks
-    scd_pos, scd_neg s = asinh(5 scd / N), split at zero: scd_pos = max(s, 0), scd_neg = min(s, 0) (idp-rg)
     shd              sequence hydropathy decoration, sum over i < j of (lambda_i + lambda_j) |i - j|^(-1),
                      divided by N (Zheng et al. 2020)
 """
@@ -30,7 +29,6 @@ import numpy as np
 from forcefield import AA_PARAMS
 
 KAPPA_BLOBS = (5, 6)  # blob sizes kappa is averaged over (Das & Pappu 2013, as localCIDER does)
-SCD_SCALE = 5.0       # the 5 in scd_pos / scd_neg (idp-rg)
 
 
 def scd(q):
@@ -104,7 +102,6 @@ def descriptors(sequence):
     q = np.array([AA_PARAMS[aa]["charge"] for aa in sequence], dtype=float)
     lam = np.array([AA_PARAMS[aa]["hydropathy"] for aa in sequence], dtype=float)
     n = len(sequence)
-    s = math.asinh(SCD_SCALE * scd(q) / n)
     return dict(N=n, net_charge=q.sum(), ncpr=q.sum() / n, fcr=np.count_nonzero(q) / n,
                 f_plus=q[q > 0].sum() / n, f_minus=-q[q < 0].sum() / n, mean_hydro=lam.mean(),
-                kappa=kappa(q), scd=scd(q), scd_pos=max(s, 0.0), scd_neg=min(s, 0.0), shd=shd(lam))
+                kappa=kappa(q), scd=scd(q), shd=shd(lam))

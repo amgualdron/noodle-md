@@ -135,7 +135,11 @@ run made before this default existed has no constraint until you add this line t
 `human_idrs_12k.csv` (12,000 human disordered regions, 20-599 residues) and
 `mobidb_idps_15k.csv` (15,000 disordered proteins, 20-500 residues). Both are ordered
 so that the first rows are the most different from each other: `rows: 1-500` gives
-500 very varied proteins. To use **your own**, put a CSV file in the run folder with a
+500 very varied proteins. Besides `id` and `sequence`, both sets have the sequence
+descriptors `N`, `net_charge`, `ncpr`, `fcr`, `f_plus`, `f_minus`, `mean_hydro`,
+`kappa`, `scd` and `shd` (defined in OBSERVABLES.md, section 4), to pick proteins by
+charge or hydropathy before running. They are the same numbers a run's `manifest.csv`
+gets. To use **your own**, put a CSV file in the run folder with a
 column `id` (a unique name per protein) and a column `sequence` (one-letter code).
 
 > **Try a test first:** `physics: [test_bulk, test_grafted]` and `rows: 1-2` runs in
