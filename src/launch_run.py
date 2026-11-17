@@ -34,7 +34,7 @@ from statistics import median
 
 import yaml
 
-from runs import (RESIDUE_STEPS_PER_SECOND, ROOT, SEQUENCES, about, brush_size, checkpoint_path, compress,
+from runs import (RESIDUE_STEPS_PER_SECOND, ROOT, SEQUENCES, about, side_by_side, brush_size, checkpoint_path, compress,
                   conditions, file_size, job_numbers, read_submissions, read_tasks,
                   refresh_registry, run_from_command_line, run_lengths, slurm_queue, task_states,
                   update_registry, write_csv, write_job)
@@ -385,6 +385,11 @@ def show_plan(run_dir, settings, sequences, skipped, too_long, physics, tasks, g
         print(f"           time limit {settings['time_limit_days']:g} day(s) per job, {at_once}{extra}")
         # (a single task longer than the time limit is counted above; here only shared jobs)
         cost = {t["task_id"]: task_cost(physics[t["physics"]], t["length"]) for t in tasks}
+        wait = side_by_side([sum(cost[i] for i in g) for g in groups], settings["max_running"])
+        print(f"           {about(wait)} until all are done if "
+              + (f"{settings['max_running']} jobs run at a time" if settings["max_running"] and
+                 settings["max_running"] < len(groups) else "they all run at once")
+              + ", plus any wait in the SLURM queue (rough, as the cost)")
         over = [g for g in groups if len(g) > 1 and sum(cost[i] for i in g) > settings["time_limit_days"] * 86400]
         if over:
             print(f"           [!] {len(over)} job(s) of several tasks may need more than the time limit (rough "

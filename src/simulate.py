@@ -14,7 +14,7 @@ and everything it produces goes back there:
     jobs/job_0007.csv                  each task's state and progress, updated as it goes
                                        (read by ./noodle status)
     trajectories/task_0001_<name>.gsd  a task's production frames
-    checkpoints/task_0001.gsd          a task's full state, saved every hour and when it is
+    checkpoints/task_0001.gsd          a task's full state, saved every 10 minutes and when it is
                                        asked to stop; deleted when the task is done
 
 A task that failed is recorded as failed and the job goes on with the next one. A task
@@ -47,7 +47,7 @@ from observables import analyse_task
 from runs import (brush_size, checkpoint_path, read_job, read_tasks, run_lengths, trajectory_path,
                   write_job)
 
-REPORT_EVERY_HOURS = 1     # how often to print progress, update the log and save a checkpoint
+REPORT_EVERY_MINUTES = 10  # how often to print progress, update the job file and save a checkpoint
 FIRST_REPORT_SECONDS = 60  # one early report, so you can see the speed right away
 CHUNK_SECONDS = 60         # the simulation runs in chunks of about this long; between chunks it
                            # checks the clock and whether it was asked to stop (not a physics setting)
@@ -69,7 +69,7 @@ stop_requests = []  # the reasons received so far
 
 def request_stop(signal_number, frame):
     if stop_requests and signal_number == signal.SIGINT:
-        raise KeyboardInterrupt  # a second Ctrl-C: quit right away (the last hourly checkpoint stays)
+        raise KeyboardInterrupt  # a second Ctrl-C: quit right away (the last checkpoint, at most 10 minutes old, stays)
     reason = STOP_REASONS[signal_number]
     stop_requests.append(reason)
     print(f"\n[{now()}] Asked to stop ({reason}): saving a checkpoint after the current chunk"
@@ -296,7 +296,7 @@ def run_task(run_dir, task, physics, row, update):
     print(f"  {equilibration:,} equilibration + {production:,} production steps, "
           f"a frame every {save_every:,} steps -> {trajectory.relative_to(run_dir)}", flush=True)
 
-    # ── Run, saving progress every REPORT_EVERY_HOURS ──
+    # ── Run, saving progress every REPORT_EVERY_MINUTES ──
     # time.monotonic() is a stopwatch: unlike the wall clock it never jumps
     previous_run_time = row.get("run_time_s") or 0  # from earlier attempts of this task
     session_start = time.monotonic()
@@ -326,7 +326,7 @@ def run_task(run_dir, task, physics, row, update):
             print(f"[{now()}] {phase:13s} {100 * sim.timestep / total:5.1f}%  "
                   f"{speed:,.0f} steps/s  ~{(total - sim.timestep) / speed / 3600:.1f} h left", flush=True)
             last_report_time, last_report_step = clock, sim.timestep
-            next_report_time = clock + REPORT_EVERY_HOURS * 3600
+            next_report_time = clock + REPORT_EVERY_MINUTES * 60
     writer.flush()
     run_time = round(previous_run_time + time.monotonic() - session_start)
 
@@ -387,8 +387,8 @@ def run_job(run_dir, job):
         try:
             if run_task(run_dir, task, physics[task["physics"]], row, update) == "stopped":
                 break
-        except KeyboardInterrupt:  # Ctrl-C twice: no checkpoint now, the last hourly one stays
-            update(row, status="stopped", stop_reason="Ctrl-C twice (resumes from the last hourly checkpoint)",
+        except KeyboardInterrupt:  # Ctrl-C twice: no checkpoint now, the last one (at most 10 minutes old) stays
+            update(row, status="stopped", stop_reason="Ctrl-C twice (resumes from the last checkpoint)",
                    last_update=now())
             raise
         except Exception as error:

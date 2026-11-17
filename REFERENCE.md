@@ -302,13 +302,14 @@ The job reads its job file and runs every task not yet completed, in order. For 
    to the checkpoint's step), else from the starting configuration (3.5).
 2. **Run** in chunks: the first of 1,000 steps, then each sized to take about a minute.
    Frames are written only during production, every `production / frames` steps,
-   counted from the start of production. A minute after the start, then every hour, the
-   task saves a checkpoint and writes its progress (step, phase, speed, run time) into
-   its row of the job file.
+   counted from the start of production. A minute after the start, then every 10
+   minutes, the task saves a checkpoint and writes its progress (step, phase, speed, run
+   time) into its row of the job file. A checkpoint is one small file per task (a few MB
+   even for a brush), replaced each time, so this costs next to nothing.
 3. **Stop requests**: SIGUSR1 (time limit), SIGTERM (scancel) and SIGINT (Ctrl-C) only
    note the request. After the current chunk the task saves a checkpoint, records
    `stopped` with the reason, and the job ends (exit code 3), so nothing is lost. A
-   second Ctrl-C quits at once (the last hourly checkpoint stays).
+   second Ctrl-C quits at once (the last checkpoint, at most 10 minutes old, stays).
 4. **Done**: the task records `completed` with its frame count and deletes its
    checkpoint.
 5. **Analyse** (section 7): the task's averages go into its row of the job file
@@ -335,16 +336,31 @@ the SLURM queue (`squeue --user <you> --array --name=<run>`):
 | `submitted` | yes | waiting |
 | `submitted` | no | stopped (its job ended before reaching it) |
 | `stopped` | - | stopped (time limit, cancelled, Ctrl-C: `stop_reason`) |
-| `running` | yes | running (flagged `stuck?` if silent for over 1.5 hours) |
+| `running` | yes | running (flagged `stuck?` if silent for over 30 minutes, 3 missed reports) |
 | `running` | no | stopped (the job died without saying so) |
 
-Without SLURM, a `running` row counts as running if it reported within 1.5 hours, and
+Without SLURM, a `running` row counts as running if it reported within 30 minutes, and
 `submitted` rows of a job with such a task count as waiting.
 
 The report shows a progress bar, counts (per physics set too), the time left, and the
-tasks grouped by state, with failures grouped by error. **Time left** is computing time
-at the speeds measured in this run (as in 4.3, without the rough fallback: unknown
-until some task has measured its speed). It writes `log.csv` (5.3) and refreshes the
+tasks grouped by state, with failures grouped by error.
+
+**Time left** comes from the speeds measured in this run (unknown until some task has
+reported, a minute after it starts). A task that has measured its own speed uses it.
+Any other task uses the time per step of the run's measured tasks, which grows with the
+number of particles (chains × N): a straight line, overhead + time per particle, is
+fitted to them (same physics set if it has two sizes measured) and read at the task's
+size. The report then gives two numbers:
+
+- **until done**: how long until the running and waiting tasks are all done. The tasks of
+  a job run one after another and jobs run side by side, at most `max_running` at a time
+  (one at a time without SLURM): the time of the slowest such line of jobs. Waiting in
+  the SLURM queue comes on top.
+- **computing in all**: the sum over every unfinished task, i.e. the core-hours still to
+  spend, including stopped tasks that need `noodle launch`.
+
+The launch plan gives the same "until done" estimate, at the rough speed of its cost
+estimate. It writes `log.csv` (5.3) and refreshes the
 run's row in `runs/runs.csv`. Without a run, it refreshes and prints every run.
 
 ### 4.7 `noodle launch <run>` again

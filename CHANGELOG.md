@@ -140,6 +140,16 @@ with a different run layout: finish them with the version that launched them
   and the replicates are pooled with Python's `statistics` module (same numbers). The
   analysis code is loaded only to re-analyse a task its job didn't.
 - `./noodle status` no longer crashes on a task in its first minute (no run time yet).
+- Progress is reported every 10 minutes instead of every hour (with a checkpoint, which
+  costs next to nothing), so `noodle status` percentages move between checks; a task
+  silent for 30 minutes is flagged `stuck?`.
+- `noodle status` "Time left" is now how long until the running and waiting tasks are
+  done, with jobs running side by side (at most `max_running` at a time), instead of the
+  total computing time, which was easily read as days of waiting; the total is still
+  shown below it. Tasks without a speed of their own are estimated from a fit of time per
+  step against particle count over the run's measured tasks, instead of borrowing the
+  steps per second of the measured task closest in length. The launch plan also shows how
+  long until all are done.
 - On your own computer, the tasks waiting in a running job show as waiting, not stopped.
 - Replicates of the same protein under the same physics set always get different
   random seeds (before, two could draw the same seed and be the same simulation).

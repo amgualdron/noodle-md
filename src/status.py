@@ -21,13 +21,13 @@ from datetime import datetime
 
 import yaml
 
-from runs import (RUNS, about, compress, duration, list_runs, measured_speeds, read_submissions, read_tasks,
+from runs import (RUNS, about, side_by_side, compress, duration, list_runs, measured_speeds, read_submissions, read_tasks,
                   refresh_registry, run_from_command_line, run_here, seconds_left, slurm_queue, task_states,
                   write_csv)
 
 SHOW_ON_SCREEN = 10  # tasks per list on screen (log.csv lists them all)
 LIST_DONE_UP_TO = 20  # runs with this many tasks or fewer also list every finished task
-STALE_HOURS = 1.5     # a running task that has not reported for this long is stuck or gone
+STALE_HOURS = 0.5     # a running task that has not reported for this long (3 reports) is stuck or gone
 
 # In the order the report shows them: what needs you first
 STATES = ("failed", "stopped", "running", "waiting", "not launched", "done")
@@ -87,6 +87,24 @@ def add_time_left(rows, physics, speeds):
             r["left"] = seconds_left(r["task"], r["log"], physics[r["task"]["physics"]], speeds)
 
 
+def waiting_time(rows, max_running, on_cluster):
+    """Roughly how long until the run's waiting and running tasks are all done, once their
+    jobs run: the tasks of a job run one after another, and jobs run side by side (at most
+    max_running at once; one at a time without SLURM). Time spent waiting in the SLURM
+    queue is not included. None if some of these tasks have no estimate."""
+    jobs = defaultdict(float)  # job number -> seconds its unfinished tasks still need
+    for r in rows:
+        if r["state"] in ("running", "waiting"):
+            if r["left"] is None:
+                return None
+            jobs[r["log"]["job"]] += r["left"]
+    if not jobs:
+        return None
+    if not on_cluster:
+        return sum(jobs.values())
+    return side_by_side([jobs[job] for job in sorted(jobs)], max_running)
+
+
 # ── The report ────────────────────────────────────────────────────────────────
 class Report:
     """Builds the report's lines, in color for the screen (or plain, when printed into a file)."""
@@ -132,7 +150,7 @@ def progress_bar(counts, total, width=30):
     return "█" * done + "▓" * running + "░" * (width - done - running)
 
 
-def build_report(run_dir, settings, rows, speeds, color, limit):
+def build_report(run_dir, settings, rows, speeds, color, limit, on_cluster):
     name = run_dir.name
     by_state = {s: [r for r in rows if r["state"] == s] for s in STATES}
     counts = {s: len(by_state[s]) for s in STATES}
@@ -160,11 +178,19 @@ def build_report(run_dir, settings, rows, speeds, color, limit):
     if to_go:
         if speeds:
             left = [r["left"] for r in to_go]
-            report.add("", f"Time left  {about(sum(left))} of computing for the {len(to_go)} unfinished "
-                           f"task{'s' * (len(to_go) > 1)}, the longest needs {about(max(left))}",
-                       report.paint(f"           from the speeds measured by {len(speeds)} task"
-                                    f"{'s' * (len(speeds) > 1)} of this run; how long you wait also "
-                                    "depends on the queue", "dim"))
+            wait = waiting_time(rows, settings.get("max_running"), on_cluster)
+            active = sum(r["state"] in ("running", "waiting") for r in rows)
+            stopped = len(to_go) - active
+            computing = (f"{about(sum(left))} of computing in all"
+                         + (f" ({stopped} stopped or not launched: noodle launch starts them)" if stopped else "")
+                         + f"; from the speeds measured by {len(speeds)} task{'s' * (len(speeds) > 1)} of this run")
+            if wait is not None:
+                report.add("", f"Time left  {about(wait)} until the {active} running and waiting task"
+                               f"{'s are' if active > 1 else ' is'} done"
+                               + (", plus any wait in the SLURM queue" if on_cluster else ""),
+                           report.paint("           " + computing, "dim"))
+            else:
+                report.add("", "Time left  " + computing)
         else:
             report.add("", "Time left  not known yet: each task measures its speed a minute after it starts")
 
@@ -316,7 +342,7 @@ def main():
     add_time_left(rows, yaml.safe_load((run_dir / "physics.yaml").read_text()), speeds)
 
     color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
-    print("\n".join(build_report(run_dir, settings, rows, speeds, color, SHOW_ON_SCREEN)))
+    print("\n".join(build_report(run_dir, settings, rows, speeds, color, SHOW_ON_SCREEN, queue is not None)))
     write_log_csv(run_dir, rows, submitted)
     refresh_registry(run_dir, states)
 

@@ -31,6 +31,7 @@ import math
 import os
 import re
 import shutil
+import statistics
 import subprocess
 import sys
 from datetime import datetime
@@ -368,37 +369,65 @@ def run_lengths(physics, n_residues):
 
 
 def measured_speeds(tasks, states):
-    """[(physics set, N, steps per second)] of every task of the run that has measured its
-    speed on the machine it ran on: finished tasks (all their steps over all their run
-    time) and started ones (their latest measurement)."""
+    """[(physics set, particles, seconds per step)] of every task of the run that has
+    measured its speed on the machine it ran on: finished tasks (all their steps over all
+    their run time) and started ones (their latest measurement). Particles = chains x N."""
     speeds = []
     for task in tasks:
         state = states.get(task["task_id"], {})
         if state.get("status") == "completed" and state.get("run_time_s") and state.get("total_steps"):
-            speed = state["total_steps"] / state["run_time_s"]
+            step_time = state["run_time_s"] / state["total_steps"]
         elif state.get("steps_per_second"):
-            speed = state["steps_per_second"]
+            step_time = 1 / state["steps_per_second"]
         else:
             continue
-        speeds.append((task["physics"], task["length"], speed))
+        speeds.append((task["physics"], (state.get("chains") or 1) * task["length"], step_time))
     return speeds
 
 
+def step_time(physics_name, particles, speeds):
+    """Estimated seconds per step for a task of `particles` particles, from the measured
+    tasks of the run (of the same physics set, if it has at least two sizes measured).
+
+    A step takes a fixed overhead plus a time per particle, so a straight line is fitted
+    through (particles, seconds per step) and read at `particles` (never below the fastest
+    measured step). With a single size measured (or no clear trend), the closest measured
+    task is scaled up by size, never down."""
+    same = [s for s in speeds if s[0] == physics_name]
+    points = same if len({s[1] for s in same}) >= 2 else (same or speeds)
+    if len({s[1] for s in points}) >= 2:
+        slope, intercept = statistics.linear_regression([s[1] for s in points], [s[2] for s in points])
+        if slope > 0:
+            return max(intercept + slope * particles, min(s[2] for s in points))
+    _, size, seconds = min(points, key=lambda s: abs(s[1] - particles))
+    return seconds * max(1, particles / size)
+
+
 def seconds_left(task, state, physics, speeds, rough=False):
-    """The run time a task still needs, in seconds, at its own measured speed, or else at
-    that of the measured task closest in length (in the same physics set if there is one).
-    With no measured speed at all: the rough core speed RESIDUE_STEPS_PER_SECOND if `rough`,
-    else None."""
+    """The run time a task still needs, in seconds: at its own measured speed if it has
+    one, else at the speed step_time() estimates from the run's measured tasks. With no
+    measured speed at all: the rough core speed RESIDUE_STEPS_PER_SECOND if `rough`, else
+    None."""
     n = task["length"]
+    particles = brush_size(physics)[0] * n
     total = state.get("total_steps") or sum(run_lengths(physics, n)[:2])
     steps = total - (state.get("step") or 0)
-    speed = state.get("steps_per_second")
-    if not speed and speeds:
-        similar = [s for s in speeds if s[0] == task["physics"]] or speeds
-        speed = min(similar, key=lambda s: abs(s[1] - n))[2]
-    if speed:
-        return steps / speed
-    return steps * brush_size(physics)[0] * n / RESIDUE_STEPS_PER_SECOND if rough else None
+    if state.get("steps_per_second"):
+        return steps / state["steps_per_second"]
+    if speeds:
+        return steps * step_time(task["physics"], particles, speeds)
+    return steps * particles / RESIDUE_STEPS_PER_SECOND if rough else None
+
+
+def side_by_side(job_seconds, max_running):
+    """How long a list of jobs takes when they run side by side, at most max_running at a
+    time (0 = all at once), each starting as soon as a slot is free, in job order."""
+    if not job_seconds:
+        return 0.0
+    slots = [0.0] * min(max_running or len(job_seconds), len(job_seconds))
+    for seconds in job_seconds:
+        slots[slots.index(min(slots))] += seconds
+    return max(slots)
 
 
 def duration(seconds):
