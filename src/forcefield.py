@@ -14,11 +14,13 @@ the integrator, which adds them all up at every step.
 
 Nothing in here reads files or knows about runs; simulate.py calls these functions
 with numbers taken from the run's physics.yaml.
+
+HOOMD is imported only inside the functions that build forces: loading it takes a while
+(up to minutes on a cluster's shared filesystem), and the residue table and formulas are
+also used by commands that never simulate (noodle analyze, export, clean, launch's plan).
 """
 
 import numpy as np
-import hoomd
-import hoomd.md
 
 
 # ── Residue table ─────────────────────────────────────────────────────────────
@@ -114,6 +116,7 @@ def residue_pair_forces(physics, nlist):
     its energy there is exactly zero, and skipping it makes runs ~1.5x faster. With
     lj_r_cut below yukawa_r_cut, the neighbour list of those pairs is also shorter.
     """
+    import hoomd.md  # (see the top of this file)
     epsilon = physics["epsilon_lj"]
     kT = thermal_energy(physics["temperature_K"])
     bjerrum, kappa = debye_huckel(physics["temperature_K"], physics["ionic_concentration_M"])
@@ -175,6 +178,7 @@ def wall_forces(physics, z_wall, z_ceiling):
     The ceiling only exists to stop beads wrapping through the periodic box in z; it is
     always purely repulsive and placed out of reach of the chain.
     """
+    import hoomd.md  # (see the top of this file)
     n, m = WALL_EXPONENTS[physics["wall_potential"]]
     epsilon = physics["wall_epsilon"]
     # A Plane wall acts on the beads on the side its normal points to
@@ -237,6 +241,7 @@ def charged_surface(physics, surface, reach):
     check_physics.py compares the result with the formula above. Running this inside
     HOOMD, rather than as a Python force, makes charged-surface runs ~3x faster.
     """
+    import hoomd.md  # (see the top of this file)
     OFFSET = 30
     kT = thermal_energy(physics["temperature_K"])
     bjerrum, kappa = debye_huckel(physics["temperature_K"], physics["ionic_concentration_M"])

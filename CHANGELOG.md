@@ -123,6 +123,11 @@ with a different run layout: finish them with the version that launched them
   instead of 10,000 steps, so a stop request is always answered within about a minute.
 
 ### Fixed
+- `noodle analyze`, `export` and `clean` seemed to freeze for a minute or more on the
+  cluster, printing nothing: they loaded HOOMD, which is slow from a shared filesystem,
+  without needing it. HOOMD is now loaded only where forces are built (`forcefield.py`),
+  so these commands start in about a second. `analyze` says what it is doing from its
+  first line, and warns before loading HOOMD to re-analyse tasks their job didn't.
 - `./noodle status` no longer crashes on a task in its first minute (no run time yet).
 - On your own computer, the tasks waiting in a running job show as waiting, not stopped.
 - Replicates of the same protein under the same physics set always get different

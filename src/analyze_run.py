@@ -47,6 +47,8 @@ def reanalyse(run_dir, tasks, physics, to_do):
     """Analyse here the completed tasks in `to_do` that their job could not analyse, and
     add them to analysis/reanalysed.csv and reanalysed_profiles.csv. Returns {task id: error}
     of the ones that failed again."""
+    print(f"  {len(to_do)} finished task(s) were not analysed by their job: analysing them here. "
+          "Loading HOOMD first can take a minute.", flush=True)
     from simulate import system_geometry  # imports HOOMD, so only when needed
 
     averages_path = run_dir / "analysis" / "reanalysed.csv"
@@ -61,7 +63,7 @@ def reanalyse(run_dir, tasks, physics, to_do):
         if not trajectory.exists():
             errors[task_id] = "no trajectory here (moved to storage?): copy it back into trajectories/"
             continue
-        print(f"  analysing task {task_id} ({task['sequence_name']}, {task['physics']}) here: its job could not")
+        print(f"  analysing task {task_id} ({task['sequence_name']}, {task['physics']}) ...", flush=True)
         try:
             frame_time = run_lengths(p, len(sequence))[2] * p["dt"]
             result, rows = analyse_task(trajectory, sequence, p, system_geometry(sequence, p), frame_time)
@@ -253,6 +255,7 @@ def analyze(run_dir):
     """Pool every analysed task into analysis/ and manifest.csv. Returns the ids of the
     tasks whose results are saved (./noodle clean may delete their trajectories)."""
     tasks = {task["task_id"]: task for task in read_tasks(run_dir)}
+    print(f"Gathering the results of {run_dir.name} ({len(tasks)} tasks) ...", flush=True)
     physics = yaml.safe_load((run_dir / "physics.yaml").read_text())
     states = task_states(run_dir)
     results, profiles, errors = gather(run_dir, tasks, states, physics)

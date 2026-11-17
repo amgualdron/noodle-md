@@ -271,7 +271,7 @@ def write_manifest(run_dir, settings, sequences, row_numbers, physics):
     """manifest.csv: one row per protein and physics set, with everything known before
     the simulations (name, sequence, where it came from, the physics conditions, the
     sequence descriptors). ./noodle analyze adds the simulation averages to the same rows."""
-    from descriptors import descriptors  # imports HOOMD (for the residue table), like the plan
+    from descriptors import descriptors
 
     print(f"Computing the sequence descriptors of {len(sequences)} proteins for manifest.csv ...", flush=True)
     described = {name: descriptors(sequence) for name, sequence in sequences.items()}
@@ -303,7 +303,7 @@ def describe_physics(p):
 def surface_potential(p):
     """e psi / kT at a charged surface: 4 pi l_B sigma / kappa (linearised Debye-Huckel,
     salt water on one side, as in forcefield.charged_surface)."""
-    from forcefield import debye_huckel  # imports HOOMD, which the plan loads anyway
+    from forcefield import debye_huckel
 
     bjerrum, kappa = debye_huckel(p["temperature_K"], p["ionic_concentration_M"])
     return 4 * math.pi * bjerrum * p["wall_charge_density"] / kappa
