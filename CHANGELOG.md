@@ -65,6 +65,10 @@ with a different run layout: finish them with the version that launched them
 - scipy is listed in `src/environment.yml` (it was already installed through MDAnalysis).
 
 ### Changed
+- Shorter productions, from a measurement of relaxation times (REFERENCE.md, section 3.6):
+  grafted chains `production_multiplier` 22 -> 8 and `frames` 3000 -> 2000 (still at
+  least 64 independent Rg samples per protein); bulk (`baseline`) 22 -> 6, provisional
+  until measured. Brushes unchanged (3, 500). Runs already launched keep their lengths.
 - New runs use only the cluster's faster nodes:
   `extra_sbatch: ["--constraint=cascadelake|icelake|sapphirerapids"]` is now the default
   in `run.yaml`. It leaves out the Skylake and 1.8 GHz nodes. `extra_sbatch: []` allows

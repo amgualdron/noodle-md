@@ -34,14 +34,17 @@ baseline:
   dt: 0.02                            # time step, in units of 0.489 ps (~10 fs, as in the
                                       #   original HPS model; bonds vibrate over ~40 steps)
   # steps = multiplier * N^2.2 / dt  (N = number of residues), i.e. lengths grow with
-  # the chain's relaxation time. These multipliers are a rule of thumb from experience
-  # with free (bulk) chains; ./noodle analyze reports how many independent samples a
+  # the chain's relaxation time. ./noodle analyze reports how many independent samples a
   # run really got (column independent_samples), to check them.
   rouse_multiplier: 2                 # equilibration length
-  production_multiplier: 22           # production length
+  production_multiplier: 6            # production length. PROVISIONAL for free chains, not yet
+                                      #   measured in bulk: a free chain should relax faster than
+                                      #   a grafted one, and grafted chains measured fine at 6
+                                      #   (see grafted below)
   equilibration_steps:                # leave empty to use the multipliers; a number overrides
   production_steps:
-  frames: 3000                        # frames saved, evenly spaced over production
+  frames: 3000                        # frames saved, evenly spaced over production (closely
+                                      #   spaced, as free chains relax faster)
 
 grafted:
   extends: baseline
@@ -61,6 +64,14 @@ grafted:
   wall_charge_density: 0.0            # e/nm^2 on the surface; screened with the same Debye
                                       #   length as the residues. 0 = neutral surface
   wall_headroom: 2.0                  # nm; ceiling sits at contour length + this above the surface
+
+  # Run length, measured (length_test, 35 proteins, N = 22-239, Nov 2026): the Rg relaxation
+  # time is c x N^2.2 tu with c = 0.006-0.062 (median 0.021; expanded chains are the slow
+  # ones), the end-to-end time 2-4x longer. A multiplier of 8 gives every one of them 64 or
+  # more independent Rg samples (median ~190) and Rg errors of ~0.3-2.6% per replicate.
+  # For more certainty on Ree and heights, add replicates rather than length.
+  production_multiplier: 8
+  frames: 2000                        # ~5 frames per Rg relaxation time at the median c
 
   # Brush: many chains of the same protein grafted on a square lattice (REFERENCE.md, section 3.5)
   grafting_density: 0                 # chains per nm^2. 0 = a single chain in a box box_size wide
@@ -105,11 +116,11 @@ brush_charged:
   wall_charge_density: -0.1
 
 # ── Run-length test: how long a production is really needed ──────────────────
-# A grafted chain with a production ~3.7x shorter than `grafted` (6 instead of 22,
-# equilibration unchanged). Run it on varied proteins (e.g. rows: 1-50, replicates: 1,
-# max_residues: 200), then check in the manifest that independent_samples stays at 50 or
-# more and drift at 0. tau_rg_tu / N^2.2 gives c, and a production_multiplier of
-# 2 x c x (independent samples wanted) is enough for that sample count.
+# The grafted chain this was measured with (results in `grafted` above). Run it on
+# varied proteins (e.g. rows: 1-50, replicates: 1, max_residues: 250), then check in the
+# manifest that independent_samples stays at 50 or more and drift at 0. tau_rg_tu / N^2.2
+# gives c, and a production_multiplier of 2 x c x (independent samples wanted) is enough
+# for that sample count. For bulk, the same with `extends: baseline`.
 length_test:
   extends: grafted
   description: "Run-length test: grafted chain, production_multiplier 6, 1500 frames"

@@ -210,7 +210,7 @@ brackets: every protein is then simulated under each.
 | `grafted_charged` | attached to a negatively charged surface (−0.1 charges per nm²) |
 | `brush` | 100 copies attached side by side, 0.05 per nm² |
 | `brush_charged` | the same brush on the charged surface |
-| `length_test` | `grafted` with a ~3.7x shorter production: to measure how long simulations really need to be |
+| `length_test` | `grafted` with production multiplier 6: how the grafted run length was measured |
 | `test_bulk`, `test_grafted`, `test_grafted_charged`, `test_brush` | tiny versions, to try things out |
 
 **To change something** (temperature, salt, surface charge, brush density...), don't

@@ -175,12 +175,26 @@ A chain's relaxation time grows like N^2.2 (Rouse dynamics with excluded volume)
 
 steps = multiplier × N^2.2 / dt,
 
-with `rouse_multiplier` (2) for equilibration and `production_multiplier` for production
-(22 for single chains, 3 for brushes, whose every frame averages over 100 chains). A
-number in `equilibration_steps` / `production_steps` overrides the formula (the `test_*`
+with `rouse_multiplier` (2) for equilibration and `production_multiplier` for production.
+A number in `equilibration_steps` / `production_steps` overrides the formula (the `test_*`
 sets use tiny fixed lengths). `frames` frames are saved, evenly spaced over production.
-Measured relaxation times of ~0.01-0.04 × N^2.2 tu put a single-chain production at
-several hundred relaxation times. The brush values are provisional (section 10).
+
+| sets | production_multiplier | frames | basis |
+|---|---|---|---|
+| `grafted*` | 8 | 2000 | measured (below) |
+| `baseline` (bulk) | 6 | 3000 | provisional: a free chain should relax faster than a grafted one |
+| `brush*` | 3 | 500 | provisional: every frame averages over 100 chains (section 10) |
+
+**Grafted chains, measured** (`length_test`: multiplier 6, 1500 frames, 35 proteins,
+N = 22-239, one replicate each). The Rg autocorrelation time is τ_Rg = c × N^2.2 tu with
+c = 0.006-0.062 (median 0.021, 90th percentile 0.042). The spread is about 1.7x at a
+given N and follows how expanded the chain is: expanded chains relax slowly, compact
+hydrophobic ones fast (c correlates +0.45 with Rg/√N, −0.55 with `shd`). A free power-law
+fit gives N^1.74 over all chains and N^2.45 over N ≥ 100 (±~0.5), consistent with 2.2.
+τ_Ree is typically 2-4x τ_Rg (up to 11x). At multiplier 6 every protein got at least 48
+independent Rg samples (median 143), Rg errors of 0.4-3%, Ree errors up to 6%, and 1 of 35
+drifted. Independent samples = multiplier / (2c), so 8 gives at least 64 (median ~190).
+Ree and heights get fewer; replicates are the cheaper way to tighten them.
 
 Run time grows like N^3.2 for a brush (100 × N residues × N^2.2 steps). Rough costs
 on one core (1 million residue-steps per second):
@@ -691,6 +705,9 @@ in `src/simulate.py`, the checks in `src/launch_run.py`, `brush_size`/`condition
   and densities is the main open task; until then, check `drift` and
   `independent_samples` on every brush row. Dense brushes (~0.3 chains/nm²) likely
   need a longer production.
+- **Bulk run length is provisional.** `baseline` uses `production_multiplier: 6`
+  (down from 22), not yet measured on free chains: run `length_test` with
+  `extends: baseline` and check `independent_samples` and `drift`.
 - **Model times are not real times** (3.4): compare τ's between tasks only.
 - **Rh** from the Kirkwood formula is an approximation for flexible chains; compare
   trends, not absolute values, with experiments.
