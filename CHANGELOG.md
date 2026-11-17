@@ -65,6 +65,10 @@ with a different run layout: finish them with the version that launched them
 - scipy is listed in `src/environment.yml` (it was already installed through MDAnalysis).
 
 ### Changed
+- New runs use only the cluster's faster nodes:
+  `extra_sbatch: ["--constraint=cascadelake|icelake|sapphirerapids"]` is now the default
+  in `run.yaml`. It leaves out the Skylake and 1.8 GHz nodes. `extra_sbatch: []` allows
+  every node again. Existing runs keep their own `run.yaml` until you add the line.
 - Run names can't be only digits (those are run numbers now).
 - `rows` also takes a list of rows and ranges, `[1-50, 75, 200-210]`: in `run.yaml` a
   list in brackets always means "several". A range is still written with a dash, `1-50`.

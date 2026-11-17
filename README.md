@@ -118,6 +118,19 @@ The grouping only depends on the proteins, so the same run always gives the same
 and `noodle launch` shows it before you agree. Set `max_jobs: 0` for one job per task,
 whatever the size.
 
+**Fast nodes only.** By default jobs run only on the cluster's faster processors
+(Cascade Lake, Ice Lake and Sapphire Rapids nodes), through this line of `run.yaml`:
+
+```yaml
+extra_sbatch: ["--constraint=cascadelake|icelake|sapphirerapids"]
+```
+
+The slower Skylake and 1.8 GHz nodes are left out, so jobs take about the same time
+wherever they land. To use every node (shorter queue waits, slower jobs), write
+`extra_sbatch: []`. `sinfo -o "%30N %f"` lists the processor names a cluster knows. A
+run made before this default existed has no constraint until you add this line to its
+`run.yaml`. It applies to jobs submitted after that, at the next `noodle launch`.
+
 **Sequences.** Two sets come with the code, in the `sequences/` folder:
 `human_idrs_12k.csv` (12,000 human disordered regions, 20-599 residues) and
 `mobidb_idps_15k.csv` (15,000 disordered proteins, 20-500 residues). Both are ordered

@@ -51,4 +51,9 @@ time_limit_days: 3              # time limit per SLURM job, in days (decimals ar
                                 #   A task that runs out of time saves a checkpoint first:
                                 #   ./noodle launch again resumes it from there.
 max_running: 0                  # most jobs (= cores) running at the same time (0 = no limit)
-extra_sbatch: []                # anything else your cluster needs, e.g. ["--partition=normal"]
+extra_sbatch: ["--constraint=cascadelake|icelake|sapphirerapids"]
+                                # anything else for sbatch, e.g. ["--partition=normal"]. The default
+                                #   runs jobs only on the cluster's faster nodes (2.4 GHz Cascade
+                                #   Lake, Ice Lake, Sapphire Rapids), not on the 2.1 GHz Skylake or
+                                #   1.8 GHz nodes, so every job runs at about the same speed. See the
+                                #   names with: sinfo -o "%30N %f". [] = any node.

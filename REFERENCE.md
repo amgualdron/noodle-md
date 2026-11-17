@@ -291,6 +291,14 @@ number = offset + array index. Every submitted job is recorded in `jobs/submitte
 sends everything the job prints to `jobs/job_NNNN.out`, and `exec`s the Python job
 runner, so Python itself receives SLURM's signals.
 
+New runs get `extra_sbatch: ["--constraint=cascadelake|icelake|sapphirerapids"]` from
+`src/run_template.yaml`. It keeps jobs off the 2.1 GHz Skylake and 1.8 GHz nodes. This is
+mainly for speed. It also makes per-step times more uniform, which helps the step-time
+fit behind `noodle status`. The constraint is passed straight to sbatch with no shell, so
+the `|` needs no quoting. The names come from `sinfo -o "%N %f"` on the group's cluster.
+The conda-forge HOOMD build is generic x86-64, so it doesn't use AVX-512 itself: the
+constraint selects nodes by processor generation and clock, not by instruction set.
+
 **Without SLURM** (your own computer), the jobs run one after another in the terminal,
 through the same job runner.
 
