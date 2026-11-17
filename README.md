@@ -38,7 +38,7 @@ You type everything below in a **terminal** (on the cluster: after logging in wi
 **1. Download the code**
 
 ```bash
-git clone <URL of this repository> noodle-md
+git clone https://github.com/amgualdron/noodle-md.git noodle-md
 cd noodle-md
 ```
 
