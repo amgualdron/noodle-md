@@ -69,6 +69,8 @@ with a different run layout: finish them with the version that launched them
   grafted chains `production_multiplier` 22 -> 8 and `frames` 3000 -> 2000 (still at
   least 64 independent Rg samples per protein); bulk (`baseline`) 22 -> 6, provisional
   until measured. Brushes unchanged (3, 500). Runs already launched keep their lengths.
+- `length_test` (the grafted measurement) is replaced by `length_test_bulk`: `baseline`
+  with 6000 frames, to measure the bulk run length the same way.
 - New runs use only the cluster's faster nodes:
   `extra_sbatch: ["--constraint=cascadelake|icelake|sapphirerapids"]` is now the default
   in `run.yaml`. It leaves out the Skylake and 1.8 GHz nodes. `extra_sbatch: []` allows

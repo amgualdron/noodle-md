@@ -185,7 +185,7 @@ sets use tiny fixed lengths). `frames` frames are saved, evenly spaced over prod
 | `baseline` (bulk) | 6 | 3000 | provisional: a free chain should relax faster than a grafted one |
 | `brush*` | 3 | 500 | provisional: every frame averages over 100 chains (section 10) |
 
-**Grafted chains, measured** (`length_test`: multiplier 6, 1500 frames, 35 proteins,
+**Grafted chains, measured** (a `grafted` run at multiplier 6, 1500 frames, 35 proteins,
 N = 22-239, one replicate each). The Rg autocorrelation time is τ_Rg = c × N^2.2 tu with
 c = 0.006-0.062 (median 0.021, 90th percentile 0.042). The spread is about 1.7x at a
 given N and follows how expanded the chain is: expanded chains relax slowly, compact
@@ -706,8 +706,8 @@ in `src/simulate.py`, the checks in `src/launch_run.py`, `brush_size`/`condition
   `independent_samples` on every brush row. Dense brushes (~0.3 chains/nm²) likely
   need a longer production.
 - **Bulk run length is provisional.** `baseline` uses `production_multiplier: 6`
-  (down from 22), not yet measured on free chains: run `length_test` with
-  `extends: baseline` and check `independent_samples` and `drift`.
+  (down from 22), not yet measured on free chains: run `length_test_bulk` on varied
+  proteins and check `independent_samples` and `drift` (physics.yaml explains how).
 - **Model times are not real times** (3.4): compare τ's between tasks only.
 - **Rh** from the Kirkwood formula is an approximation for flexible chains; compare
   trends, not absolute values, with experiments.
