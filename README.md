@@ -297,6 +297,15 @@ shows how, with examples.
   you to type the run's name first.
 - **Updating the code:** `git pull` (your runs are never touched). See `CHANGELOG.md`
   for what changed.
+- **Sharing one copy with your group.** Clone and set it up once inside a group folder
+  (one whose permissions show an `s`, like `drwxrwsr-x`), for example
+  `/groups/<group>/noodle-md`. Then everything `noodle` and its jobs make is editable by
+  the whole group: anyone can make runs, edit any `run.yaml`, and check, continue,
+  analyse or export anyone's run. Every member adds the same two lines from section 1 to
+  their own `~/.bashrc`, with the group folder's path (replacing any older `noodle`
+  lines). Only the person who cloned it runs `git pull`. Two limits: only the person
+  who launched a run's jobs can `noodle cancel` them (SLURM allows nothing else), and
+  `noodle clean` deletes anyone's trajectories, so agree on who cleans what.
 
 ---
 

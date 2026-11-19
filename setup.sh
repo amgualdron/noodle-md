@@ -23,6 +23,7 @@ CONDA_MODULE=anaconda   # name of your cluster's conda module (module avail cond
 
 # sbatch runs a copy of this script, so go to the folder it was submitted from
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$(readlink -f "$0")")}" || exit 1
+[ -g . ] && umask 002  # shared group folder: env/ usable by the whole group (see ./noodle)
 export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
 
 if ! command -v conda > /dev/null; then

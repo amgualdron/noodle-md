@@ -21,6 +21,8 @@
 # output file.
 export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 PYTHONUNBUFFERED=1
 
+[ -g . ] && umask 002  # shared group folder: files group-writable (see ./noodle)
+
 JOB=$(( $2 + SLURM_ARRAY_TASK_ID ))
 # Everything this job prints goes to jobs/job_0007.out (for job 7)
 exec >> "$1/jobs/job_$(printf %04d "$JOB").out" 2>&1

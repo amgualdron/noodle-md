@@ -26,7 +26,6 @@ runs/runs.csv, the list of every run with its number, is written only by ./noodl
 """
 
 import csv
-import getpass
 import math
 import os
 import re
@@ -470,10 +469,14 @@ def slurm_queue(run_name):
     {'1234_17': 'RUNNING', '1234_18': 'PENDING'}; None on a computer without SLURM.
 
     A job array's elements are listed one by one ('<job>_<array index>'), and a job
-    leaves the queue as soon as it ends, for whatever reason.
+    leaves the queue as soon as it ends, for whatever reason. Every user's jobs are
+    listed, not only yours: in a shared copy of noodle-md someone else may have launched
+    this run, and launch must still see those jobs to leave them alone. Callers only
+    look up the SLURM ids in the run's own jobs/submitted.csv, so another user's job
+    with the same name never counts.
     """
     if shutil.which("squeue") is None:
         return None
-    out = subprocess.run(["squeue", "--user", getpass.getuser(), "--noheader", "--array",
+    out = subprocess.run(["squeue", "--noheader", "--array",
                           "--format=%i %T", f"--name={run_name}"], capture_output=True, text=True)
     return dict(line.split() for line in out.stdout.splitlines() if line.strip())

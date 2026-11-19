@@ -348,7 +348,9 @@ A resumed task is as valid as an uninterrupted one, but not frame-for-frame iden
 ### 4.6 `noodle status [run]`
 
 A task's **current state** is its row in the newest job file that lists it, combined with
-the SLURM queue (`squeue --user <you> --array --name=<run>`):
+the SLURM queue (`squeue --array --name=<run>`, every user's jobs, matched by the SLURM ids
+in the run's `jobs/submitted.csv`, so a run launched by someone else in a shared copy is
+seen the same way):
 
 | row status | SLURM job in the queue? | shown as |
 |---|---|---|
@@ -446,6 +448,14 @@ command's program, so the help can't drift from the code. `noodle-completion.bas
 completes commands, then run names (folders of `runs/` with a `run.yaml`). `setup.sh`
 builds `env/` from `src/environment.yml`, runs `noodle check`, and prints the alias and
 `source` lines for `~/.bashrc`.
+
+**Shared copies.** When the `noodle-md` folder has the setgid bit (`drwxrwsr-x`, the
+usual setup of a group folder), `noodle`, `setup.sh` and `src/slurm_job.sh` set
+`umask 002`: every file and folder they and their jobs create is group-writable, and the
+setgid bit gives it the folder's group. So any member can edit any run's `run.yaml`,
+continue a run someone else launched (a resumed task appends to the existing
+trajectory), and update `runs/runs.csv` and `log.csv`. In a personal folder (no setgid
+bit) the user's own umask applies, as before.
 
 ---
 

@@ -65,6 +65,12 @@ with a different run layout: finish them with the version that launched them
 - scipy is listed in `src/environment.yml` (it was already installed through MDAnalysis).
 
 ### Changed
+- **One copy can be shared by a research group.** In a folder with the setgid bit (a group
+  folder, `drwxrwsr-x`), `noodle`, `setup.sh` and the jobs make everything group-writable
+  (`umask 002`), and the SLURM queue is read for every user (`squeue` without `--user`;
+  jobs are still matched by the run's own SLURM ids). Before, a run launched by one member
+  looked "stopped" to another, whose `noodle launch` would then have started its queued
+  tasks a second time. README section 6 says how to set a group up.
 - The shared sequence sets (`human_idrs_12k.csv`, `mobidb_idps_15k.csv`) carry the standard
   sequence descriptors `N`, `net_charge`, `ncpr`, `fcr`, `f_plus`, `f_minus`, `mean_hydro`,
   `kappa`, `scd`, `shd`, computed with `src/descriptors.py`, the same code as the

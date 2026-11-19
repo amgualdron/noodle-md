@@ -29,6 +29,10 @@ EOF
 
 export NOODLE_CWD="$PWD"  # where you are, so a run can be picked by being in its folder
 cd "$(dirname "$(readlink -f "$0")")" || exit 1
+# In a group's shared folder (setgid bit, the s in drwxrwsr-x) everything this tool makes,
+# and everything its jobs make, is group-writable, so anyone in the group can continue,
+# check or analyse anyone's run. In a personal folder nothing changes.
+[ -g . ] && umask 002
 
 program_of() {
     case "$1" in
